@@ -1,0 +1,7 @@
+﻿date,campaign,impressions,clicks,spend,conversions,conversion_value
+2026-10-01,Campaign A,1000,50,100,5,300
+2026-10-02,Campaign A,1200,60,120,6,360
+2026-10-03,Campaign A,1500,45,90,3,180
+2026-10-04,Campaign B,2000,80,160,8,480
+2026-10-05,Campaign B,1800,54,108,4,240
+2026-10-06,Campaign C,900,27,54,2,120

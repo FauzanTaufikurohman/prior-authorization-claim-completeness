@@ -39,7 +39,7 @@ Register publik selalu menghasilkan akun Staff. Role Reviewer/Admin diatur Admin
 |---|---|
 | File dokumen | Unggah PDF berbasis teks atau CSV maksimal 10 MiB. PDF hasil scan belum didukung OCR. |
 | Konfirmasi data sintetis/de-identifikasi | Untuk PDF, menyatakan teks yang dikirim ke OpenAI tidak memuat data pasien yang dapat dikenali. Wajib sebelum parsing PDF. |
-| Jalankan parsing | PDF: AI mengekstrak field yang diminta checklist. CSV: backend membaca `field,value` tanpa OpenAI. |
+| Jalankan parsing | PDF: parser membaca pasangan label-nilai (`:` atau `=`) dan tabel sederhana, lalu AI dapat melengkapi field semantik checklist. CSV diproses lokal; dua kolom dianggap label/nilai, sedangkan tabel lebih lebar memakai header kolom sebagai nama field. |
 | Field value | Nilai hasil ekstraksi. Staff dapat membetulkan/melengkapi saat Draft atau Perlu informasi. |
 | Evidence text | Kutipan sumber yang dipakai untuk menunjukkan asal nilai; periksa kecocokan dengan dokumen. |
 | Confidence | Perkiraan keyakinan model (0 sampai 1), bukan jaminan kebenaran. |
@@ -88,7 +88,7 @@ Contoh key yang tersedia untuk aturan checklist: `patient_name`, `patient_refere
 
 | Field/tindakan | Fungsi |
 |---|---|
-| Catat pengajuan ke payer | Dipilih setelah Staff benar-benar mengirim permohonan lewat kanal payer. Aplikasi tidak mengirimnya otomatis. |
+| Catat pengajuan ke payer | Pilih kanal dan catat setelah Staff benar-benar mengirim permohonan. Aplikasi tidak mengirimkannya otomatis. |
 | Nomor referensi payer | Nomor yang diberikan payer setelah menerima pengajuan; opsional. |
 | Outcome keputusan payer | Pilih `approved`, `denied`, `partially_approved`, atau `withdrawn` sesuai jawaban payer. |
 | Catatan keputusan payer | Ringkasan hasil/alasan/tanggal penting; wajib saat mencatat keputusan. Setelah tersimpan status menjadi Selesai. |

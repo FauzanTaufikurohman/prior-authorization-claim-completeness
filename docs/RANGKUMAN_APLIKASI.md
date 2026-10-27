@@ -23,14 +23,15 @@ Pendaftaran publik membuat akun dengan role `staff`. Role lain hanya ditetapkan 
 1. **Admin menyiapkan checklist** untuk pasangan payer + jenis layanan. Setiap aturan menghubungkan satu `required_field_key` dengan deskripsi. Checklist harus diaktifkan sebelum Staff dapat mengirim permohonan.
 2. **Staff membuat permohonan** (`draft`), memilih pasangan payer/layanan dari checklist aktif, mengisi referensi pasien dan diagnosis, serta NPI penyedia bila tersedia.
 3. **Staff mengunggah dokumen** CSV atau PDF berbasis teks. Untuk PDF, Staff memberi konfirmasi bahwa data sintetis atau sudah de-identifikasi sebelum teks dikirim ke OpenAI.
-4. **AI mem-parsing PDF** dan menyarankan nilai field, bukti teks, serta confidence. CSV tidak dikirim ke AI: backend membaca format CSV `field,value` secara deterministik.
+4. **Parser membaca label dan nilai dari dokumen.** PDF berbasis teks dipindai untuk pasangan yang dipisahkan `:` atau `=`, serta pasangan dua kolom pada tabel. Ekstraksi AI dapat melengkapi field semantik yang dikonfigurasi; CSV diproses lokal, dengan dua kolom sebagai label/nilai atau tiga kolom lebih sebagai tabel ber-header.
 5. **Staff memeriksa hasil**, membetulkan nilai yang salah/kosong, lalu mengirim permohonan untuk review. Syarat kirim: checklist aktif cocok, memiliki field wajib, sedikitnya satu dokumen diunggah, dan seluruh dokumen berstatus parsing `completed`.
 6. Status menjadi **`ready_for_review`** dan masuk antrian Reviewer.
 7. **Reviewer memulai review** (`in_review`), memeriksa field dan bukti. Reviewer menandai field `verified`, `corrected`, atau `uncertain`; lalu menjalankan evaluasi checklist.
 8. Jika ada kekurangan, Reviewer memakai **Minta informasi** dan mengisi catatan. Status menjadi `needs_information`; Staff melengkapi data/dokumen dan mengirim kembali.
 9. Jika semua field wajib memiliki nilai dan diverifikasi serta checklist seluruhnya terpenuhi, Reviewer memilih **Selesaikan review**. Status menjadi `ready_for_submission`.
 10. **Staff mengirim permohonan ke payer di luar aplikasi**, lalu memilih **Catat pengajuan ke payer** (`submitted`) dan memasukkan nomor referensi payer jika ada.
-11. Setelah payer menjawab, Staff memilih **Catat keputusan payer**. Outcome dan catatan disimpan, status menjadi `completed`.
+11. Jika payer meminta informasi, Staff mencatat permintaan itu (`payer_needs_information`), melengkapi dokumen/field, lalu mengirim tambahan untuk review internal sebelum mengajukannya kembali.
+12. Setelah payer menjawab, Staff mencatat outcome dan alasannya. Untuk penolakan atau persetujuan sebagian, Staff juga dapat mencatat pengajuan banding dan respons payer; status banding serta catatan tersimpan dalam riwayat.
 
 Staff dapat membatalkan hanya draft atau permohonan yang dikembalikan (`cancelled`). Draft juga dapat dihapus; penghapusan memakai soft-delete sehingga baris tidak langsung dihapus permanen.
 
@@ -44,11 +45,15 @@ Staff dapat membatalkan hanya draft atau permohonan yang dikembalikan (`cancelle
 | `needs_information` | Perlu informasi | Staff harus menindaklanjuti catatan Reviewer. |
 | `ready_for_submission` | Siap diajukan | Review internal selesai; Staff mengajukan ke payer secara eksternal. |
 | `submitted` | Diajukan | Pengajuan eksternal sudah dicatat; menunggu keputusan payer. |
-| `completed` | Selesai | Staff sudah mencatat outcome payer. Outcome tetap tersimpan pada `payer_decision`. |
+| `payer_needs_information` | Payer meminta informasi | Staff melengkapi permintaan payer dan mengirim tambahan untuk review internal. |
+| `appeal_submitted` | Banding diajukan | Banding sudah dikirim melalui kanal eksternal; Staff mencatat respons payer saat diterima. |
+| `completed` | Selesai | Staff sudah mencatat outcome payer. Outcome tetap tersimpan pada `payer_decision`; respons banding tercatat di riwayat. |
 | `cancelled` | Dibatalkan | Staff membatalkan draft/permohonan yang dikembalikan. |
 | `processing`, `error` | Status lama/teknis | Dipertahankan untuk kompatibilitas data; bukan langkah alur baru. |
 
-Transisi yang tersedia: `submit_for_review`, `start_review`, `request_information`, `complete_review`, `record_submission`, `record_decision`, dan `cancel`. Semua perubahan status dicatat di `pa_request_status_history`.
+Transisi yang tersedia: `submit_for_review`, `start_review`, `request_information`, `complete_review`, `record_submission`, `request_payer_information`, `record_decision`, `record_appeal_submission`, `record_appeal_decision`, dan `cancel`. Semua perubahan status dicatat di `pa_request_status_history`.
+
+Pengajuan PA, jawaban tambahan, dan banding tetap dikirim di luar aplikasi lalu dicatat oleh Staff. CMS-0057-F hanya mencakup QHP yang ditawarkan di Federally Facilitated Exchanges untuk payer komersial; aturan tersebut tidak otomatis mencakup semua employer-based atau commercial plans. Persyaratan tenggat, formulir, kanal, dan banding harus dikonfigurasi serta divalidasi untuk payer, produk, layanan, dan negara bagian tertentu sebelum aplikasi disebut patuh.
 
 ## 5. Apa yang AI kerjakan
 
@@ -167,12 +172,15 @@ Payload untuk `POST /pa-requests/:id/transitions`:
 
 | `action` | Role + status asal | Field tambahan dan hasil |
 |---|---|---|
-| `submit_for_review` | Staff pemilik; `draft` atau `needs_information` | Tidak ada field tambahan; syarat kelengkapan pengiriman harus terpenuhi. Menjadi `ready_for_review`. |
+| `submit_for_review` | Staff pemilik; `draft`, `needs_information`, atau `payer_needs_information` | Tidak ada field tambahan; syarat kelengkapan pengiriman harus terpenuhi. Menjadi `ready_for_review`. |
 | `start_review` | Reviewer; `ready_for_review` | Tidak ada; menjadi `in_review`. |
 | `request_information` | Reviewer; `in_review` | `note` wajib; menjadi `needs_information`. |
 | `complete_review` | Reviewer; `in_review` | Tidak ada; checklist harus memiliki aturan dan semua hasil wajib `fulfilled`; menjadi `ready_for_submission`. |
-| `record_submission` | Staff pemilik; `ready_for_submission` | `payer_reference` opsional; menjadi `submitted`, waktu submission disimpan. |
+| `record_submission` | Staff pemilik; `ready_for_submission` | `submission_channel` wajib; `payer_reference` opsional; menjadi `submitted`, waktu dan kanal dicatat di riwayat. |
+| `request_payer_information` | Staff pemilik; `submitted` | `note` wajib; menjadi `payer_needs_information`. |
 | `record_decision` | Staff pemilik; `submitted` | `payer_decision` wajib salah satu 4 outcome; `payer_decision_note` wajib; menjadi `completed`. |
+| `record_appeal_submission` | Staff pemilik; `completed` setelah ditolak/disetujui sebagian | `note` wajib; menjadi `appeal_submitted`. |
+| `record_appeal_decision` | Staff pemilik; `appeal_submitted` | `payer_decision` dan `payer_decision_note` wajib; menjadi `completed`, respons banding dicatat di riwayat. |
 | `cancel` | Staff pemilik; `draft`/`needs_information` | `note` wajib sebagai alasan; menjadi `cancelled`. |
 
 Untuk semua path `:id`, ID permohonan harus bilangan bulat positif. `:documentId`, `:fieldId`, dan checklist/user `:id` juga harus ID valid.

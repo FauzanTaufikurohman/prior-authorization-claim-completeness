@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/FauzanTaufikurohman/prior-authorization-assistant/backend/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,9 +82,11 @@ func (h *PARequestHandler) List(c *gin.Context) {
 
 	query := `
 		SELECT id, request_number, created_by, payer_name, service_type,
-		       provider_npi, patient_reference, diagnosis, status,
+		       COALESCE(provider_npi, ''), COALESCE(ordering_provider_npi, ''), COALESCE(servicing_provider_npi, ''), patient_reference, diagnosis, status,
 		       checklist_version_id, payer_reference, submitted_at, payer_decision,
-		       payer_decision_at, payer_decision_note, created_at, updated_at
+		       payer_decision_at, payer_decision_note, appeal_reference,
+		       appeal_submitted_at, appeal_decision, appeal_decision_at,
+		       appeal_decision_note, created_at, updated_at
 		FROM pa_requests
 		WHERE ` + whereSQL + `
 		ORDER BY created_at DESC, id DESC
@@ -132,10 +136,16 @@ func (h *PARequestHandler) Create(c *gin.Context) {
 		&input.PayerName,
 		&input.ServiceType,
 		&input.ProviderNPI,
+		&input.OrderingProviderNPI,
+		&input.ServicingProviderNPI,
 		&input.PatientReference,
 		&input.Diagnosis,
 	)
-	if !validInput(input.PayerName, input.ServiceType, input.ProviderNPI, input.PatientReference, input.Diagnosis) {
+	if input.OrderingProviderNPI == "" {
+		input.OrderingProviderNPI = input.ProviderNPI
+	}
+	input.ProviderNPI = input.OrderingProviderNPI
+	if !validInput(input.PayerName, input.ServiceType, input.ProviderNPI, input.PatientReference, input.Diagnosis) || !validOptionalNPI(input.ServicingProviderNPI) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Field wajib tidak boleh kosong; NPI harus terdiri dari 10 digit jika diisi."})
 		return
 	}
@@ -150,10 +160,23 @@ func (h *PARequestHandler) Create(c *gin.Context) {
 	}
 
 	userID := c.GetInt64("user_id")
-	checklistVersionID, err := findActiveChecklistVersion(ctx, h.DB, input.PayerName, input.ServiceType)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist aktif gagal dicari."})
-		return
+	checklistVersionID := input.ChecklistVersionID
+	if checklistVersionID != nil {
+		valid, checkErr := activeChecklistMatches(ctx, h.DB, *checklistVersionID, input.PayerName, input.ServiceType)
+		if checkErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist pilihan gagal diperiksa."})
+			return
+		}
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Checklist harus aktif dan sesuai payer serta layanan yang dipilih."})
+			return
+		}
+	} else {
+		checklistVersionID, err = findActiveChecklistVersion(ctx, h.DB, input.PayerName, input.ServiceType)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist aktif gagal dicari."})
+			return
+		}
 	}
 	tx, err := h.DB.Begin(ctx)
 	if err != nil {
@@ -165,29 +188,52 @@ func (h *PARequestHandler) Create(c *gin.Context) {
 	err = tx.QueryRow(ctx, `
 		INSERT INTO pa_requests (
 			request_number, created_by, payer_name, service_type,
-			provider_npi, patient_reference, diagnosis, status,
+			provider_npi, ordering_provider_npi, servicing_provider_npi, patient_reference, diagnosis, status,
 			checklist_version_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6::varchar, ''), NULLIF($7::varchar, ''), $8, $9, 'draft', $10)
 		RETURNING id, request_number, created_by, payer_name, service_type,
-		          provider_npi, patient_reference, diagnosis, status,
+		          COALESCE(provider_npi, ''), COALESCE(ordering_provider_npi, ''), COALESCE(servicing_provider_npi, ''), patient_reference, diagnosis, status,
 		          checklist_version_id, payer_reference, submitted_at, payer_decision,
-		          payer_decision_at, payer_decision_note, created_at, updated_at
+		          payer_decision_at, payer_decision_note, appeal_reference,
+		          appeal_submitted_at, appeal_decision, appeal_decision_at,
+		          appeal_decision_note, created_at, updated_at
 	`,
 		requestNumber, userID, input.PayerName, input.ServiceType,
-		input.ProviderNPI, input.PatientReference, input.Diagnosis,
+		input.ProviderNPI, input.OrderingProviderNPI, input.ServicingProviderNPI,
+		input.PatientReference, input.Diagnosis,
 		checklistVersionID,
 	).Scan(
 		&item.ID, &item.RequestNumber, &item.CreatedBy, &item.PayerName,
-		&item.ServiceType, &item.ProviderNPI, &item.PatientReference,
+		&item.ServiceType, &item.ProviderNPI, &item.OrderingProviderNPI, &item.ServicingProviderNPI, &item.PatientReference,
 		&item.Diagnosis, &item.Status, &item.ChecklistVersionID,
 		&item.PayerReference, &item.SubmittedAt, &item.PayerDecision,
 		&item.PayerDecisionAt, &item.PayerDecisionNote,
+		&item.AppealReference, &item.AppealSubmittedAt, &item.AppealDecision,
+		&item.AppealDecisionAt, &item.AppealDecisionNote,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Request tidak dapat dibuat. Periksa checklist version dan data yang dikirim."})
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) {
+			log.Printf("create PA request failed: database_code=%s constraint=%s", databaseError.Code, databaseError.ConstraintName)
+			switch databaseError.Code {
+			case "42703", "42P01":
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database belum memakai skema terbaru. Restart backend agar migration diterapkan, lalu coba simpan lagi."})
+			case "23503":
+				c.JSON(http.StatusConflict, gin.H{"error": "Checklist yang dipilih tidak lagi tersedia. Muat ulang checklist lalu coba lagi."})
+			case "23505":
+				c.JSON(http.StatusConflict, gin.H{"error": "Nomor request bertabrakan. Coba simpan draft sekali lagi."})
+			case "23514":
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Data NPI atau status request tidak sesuai format yang diminta."})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database menolak penyimpanan draft (SQLSTATE " + databaseError.Code + "). Periksa log backend untuk detail constraint."})
+			}
+			return
+		}
+		log.Printf("create PA request failed while reading inserted row: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Draft gagal disimpan saat membaca hasil database. Periksa log backend."})
 		return
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO pa_request_status_history (pa_request_id,actor_id,from_status,to_status,action) VALUES ($1,$2,NULL,'draft','created')`, item.ID, userID); err != nil {
@@ -245,10 +291,16 @@ func (h *PARequestHandler) Update(c *gin.Context) {
 		&input.PayerName,
 		&input.ServiceType,
 		&input.ProviderNPI,
+		&input.OrderingProviderNPI,
+		&input.ServicingProviderNPI,
 		&input.PatientReference,
 		&input.Diagnosis,
 	)
-	if !validInput(input.PayerName, input.ServiceType, input.ProviderNPI, input.PatientReference, input.Diagnosis) {
+	if input.OrderingProviderNPI == "" {
+		input.OrderingProviderNPI = input.ProviderNPI
+	}
+	input.ProviderNPI = input.OrderingProviderNPI
+	if !validInput(input.PayerName, input.ServiceType, input.ProviderNPI, input.PatientReference, input.Diagnosis) || !validOptionalNPI(input.ServicingProviderNPI) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Field wajib tidak boleh kosong; NPI harus terdiri dari 10 digit jika diisi."})
 		return
 	}
@@ -270,12 +322,23 @@ func (h *PARequestHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Anda tidak memiliki izin mengubah request ini."})
 		return
 	}
-	if existing.Status != "draft" && existing.Status != "needs_information" {
+	if existing.Status != "draft" && existing.Status != "needs_information" && existing.Status != "payer_needs_information" {
 		c.JSON(http.StatusConflict, gin.H{"error": "Permohonan hanya dapat diubah saat draft atau setelah dikembalikan Reviewer."})
 		return
 	}
 	checklistVersionID := existing.ChecklistVersionID
-	if !strings.EqualFold(existing.PayerName, input.PayerName) || !strings.EqualFold(existing.ServiceType, input.ServiceType) || checklistVersionID == nil {
+	if input.ChecklistVersionID != nil {
+		valid, checkErr := activeChecklistMatches(ctx, h.DB, *input.ChecklistVersionID, input.PayerName, input.ServiceType)
+		if checkErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist pilihan gagal diperiksa."})
+			return
+		}
+		if !valid {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Checklist harus aktif dan sesuai payer serta layanan yang dipilih."})
+			return
+		}
+		checklistVersionID = input.ChecklistVersionID
+	} else if !strings.EqualFold(existing.PayerName, input.PayerName) || !strings.EqualFold(existing.ServiceType, input.ServiceType) || checklistVersionID == nil {
 		checklistVersionID, err = findActiveChecklistVersion(ctx, h.DB, input.PayerName, input.ServiceType)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist aktif gagal dicari."})
@@ -289,24 +352,30 @@ func (h *PARequestHandler) Update(c *gin.Context) {
 		SET payer_name = $1,
 		    service_type = $2,
 		    provider_npi = $3,
-		    patient_reference = $4,
-		    diagnosis = $5,
-		    checklist_version_id = $6,
+		    ordering_provider_npi = NULLIF($3, ''),
+		    servicing_provider_npi = NULLIF($4, ''),
+		    patient_reference = $5,
+		    diagnosis = $6,
+		    checklist_version_id = $7,
 		    updated_at = NOW()
-		WHERE id = $7 AND deleted_at IS NULL AND status IN ('draft', 'needs_information')
+		WHERE id = $8 AND deleted_at IS NULL AND status IN ('draft', 'needs_information', 'payer_needs_information')
 		RETURNING id, request_number, created_by, payer_name, service_type,
-		          provider_npi, patient_reference, diagnosis, status,
+		          COALESCE(provider_npi, ''), COALESCE(ordering_provider_npi, ''), COALESCE(servicing_provider_npi, ''), patient_reference, diagnosis, status,
 		          checklist_version_id, payer_reference, submitted_at, payer_decision,
-		          payer_decision_at, payer_decision_note, created_at, updated_at
+		          payer_decision_at, payer_decision_note, appeal_reference,
+		          appeal_submitted_at, appeal_decision, appeal_decision_at,
+		          appeal_decision_note, created_at, updated_at
 	`,
-		input.PayerName, input.ServiceType, input.ProviderNPI,
+		input.PayerName, input.ServiceType, input.ProviderNPI, input.ServicingProviderNPI,
 		input.PatientReference, input.Diagnosis, checklistVersionID, id,
 	).Scan(
 		&item.ID, &item.RequestNumber, &item.CreatedBy, &item.PayerName,
-		&item.ServiceType, &item.ProviderNPI, &item.PatientReference,
+		&item.ServiceType, &item.ProviderNPI, &item.OrderingProviderNPI, &item.ServicingProviderNPI, &item.PatientReference,
 		&item.Diagnosis, &item.Status, &item.ChecklistVersionID,
 		&item.PayerReference, &item.SubmittedAt, &item.PayerDecision,
 		&item.PayerDecisionAt, &item.PayerDecisionNote,
+		&item.AppealReference, &item.AppealSubmittedAt, &item.AppealDecision,
+		&item.AppealDecisionAt, &item.AppealDecisionNote,
 		&item.CreatedAt, &item.UpdatedAt,
 	)
 
@@ -366,9 +435,11 @@ func (h *PARequestHandler) Delete(c *gin.Context) {
 func (h *PARequestHandler) findByID(ctx context.Context, id int64) (models.PARequest, error) {
 	row := h.DB.QueryRow(ctx, `
 		SELECT id, request_number, created_by, payer_name, service_type,
-		       provider_npi, patient_reference, diagnosis, status,
+		       COALESCE(provider_npi, ''), COALESCE(ordering_provider_npi, ''), COALESCE(servicing_provider_npi, ''), patient_reference, diagnosis, status,
 		       checklist_version_id, payer_reference, submitted_at, payer_decision,
-		       payer_decision_at, payer_decision_note, created_at, updated_at
+		       payer_decision_at, payer_decision_note, appeal_reference,
+		       appeal_submitted_at, appeal_decision, appeal_decision_at,
+		       appeal_decision_note, created_at, updated_at
 		FROM pa_requests
 		WHERE id = $1 AND deleted_at IS NULL
 	`, id)
@@ -390,6 +461,8 @@ func scanPARequest(row rowScanner) (models.PARequest, error) {
 		&item.PayerName,
 		&item.ServiceType,
 		&item.ProviderNPI,
+		&item.OrderingProviderNPI,
+		&item.ServicingProviderNPI,
 		&item.PatientReference,
 		&item.Diagnosis,
 		&item.Status,
@@ -399,6 +472,11 @@ func scanPARequest(row rowScanner) (models.PARequest, error) {
 		&item.PayerDecision,
 		&item.PayerDecisionAt,
 		&item.PayerDecisionNote,
+		&item.AppealReference,
+		&item.AppealSubmittedAt,
+		&item.AppealDecision,
+		&item.AppealDecisionAt,
+		&item.AppealDecisionNote,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -432,19 +510,52 @@ func parseRequestID(c *gin.Context) (int64, bool) {
 
 func validRequestStatus(status string) bool {
 	switch status {
-	case "draft", "ready_for_review", "in_review", "needs_information", "ready_for_submission", "submitted", "completed", "cancelled", "processing", "error":
+	case "draft", "ready_for_review", "in_review", "needs_information", "ready_for_submission", "submitted", "payer_needs_information", "appeal_submitted", "completed", "cancelled", "processing", "error":
 		return true
 	default:
 		return false
 	}
 }
 
-func normalizeInput(payer, service, npi, patient, diagnosis *string) {
+func normalizeInput(payer, service, npi, patient, diagnosis *string, roleNPIs ...*string) {
 	*payer = strings.TrimSpace(*payer)
 	*service = strings.TrimSpace(*service)
 	*npi = strings.TrimSpace(*npi)
 	*patient = strings.TrimSpace(*patient)
 	*diagnosis = strings.TrimSpace(*diagnosis)
+	for _, roleNPI := range roleNPIs {
+		*roleNPI = strings.TrimSpace(*roleNPI)
+	}
+}
+
+func validOptionalNPI(npi string) bool {
+	if npi == "" {
+		return true
+	}
+	if len(npi) != 10 {
+		return false
+	}
+	for _, r := range npi {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func activeChecklistMatches(ctx context.Context, queryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, checklistID int64, payerName, serviceType string) (bool, error) {
+	var matches bool
+	err := queryer.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM checklist_versions
+			WHERE id=$1 AND is_active=TRUE
+			  AND lower(btrim(payer_name))=lower(btrim($2))
+			  AND lower(btrim(service_type))=lower(btrim($3))
+		)
+	`, checklistID, payerName, serviceType).Scan(&matches)
+	return matches, err
 }
 
 func validInput(payer, service, npi, patient, diagnosis string) bool {

@@ -12,6 +12,8 @@ const reportStatuses = [
   "needs_information",
   "ready_for_submission",
   "submitted",
+  "payer_needs_information",
+  "appeal_submitted",
   "completed",
 ] as const;
 
@@ -38,6 +40,8 @@ const statusLabels: Record<string, string> = {
   needs_information: "Perlu informasi",
   ready_for_submission: "Siap diajukan",
   submitted: "Menunggu keputusan payer",
+  payer_needs_information: "Payer meminta informasi",
+  appeal_submitted: "Banding diajukan",
   completed: "Selesai",
   cancelled: "Dibatalkan",
   processing: "Processing",
@@ -50,6 +54,8 @@ const emptyStatusCounts: Record<RequestStatus, number> = {
   needs_information: 0,
   ready_for_submission: 0,
   submitted: 0,
+  payer_needs_information: 0,
+  appeal_submitted: 0,
   completed: 0,
 };
 
@@ -64,7 +70,7 @@ function formatDate(value: string): string {
 }
 
 function statusStyle(status: string): string {
-  if (status === "needs_information") {
+  if (status === "needs_information" || status === "payer_needs_information") {
     return "border-amber-300 bg-amber-50 text-amber-900";
   }
   if (status === "completed") {

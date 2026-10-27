@@ -53,9 +53,16 @@ func ParseTextPDF(content []byte) (text string, err error) {
 		}
 
 		for _, row := range rows {
-			for _, item := range row.Content {
+			for index, item := range row.Content {
+				if index > 0 {
+					previous := row.Content[index-1]
+					if item.X-previous.X-previous.W >= 18 {
+						extracted.WriteByte('\t')
+					} else {
+						extracted.WriteByte(' ')
+					}
+				}
 				extracted.WriteString(item.S)
-				extracted.WriteByte(' ')
 			}
 			extracted.WriteByte('\n')
 

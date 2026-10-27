@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import axios from "axios";
-import { ArrowLeft, Check, Plus, Save } from "lucide-react";
+import { ArrowLeft, Check, Plus, Power, Save, Trash2 } from "lucide-react";
 import api from "@/lib/api";
 
 type Rule = { rule_key: string; description: string; required_field_key: string; is_required: boolean };
@@ -15,6 +15,8 @@ const fieldChoices = [
   ["payer_name", "Payer / health plan"],
   ["service_type", "Requested service"],
   ["provider_npi", "Provider NPI"],
+  ["ordering_provider_npi", "Ordering provider NPI"],
+  ["servicing_provider_npi", "Servicing provider NPI"],
   ["diagnosis", "Diagnosis or diagnosis code"],
   ["clinical_notes", "Ringkasan klinis pendukung"],
   ["prior_treatments", "Riwayat terapi yang tercatat"],
@@ -71,6 +73,24 @@ export default function ChecklistsPage() {
     finally { setBusy(false); }
   }
 
+  async function deactivate(id: number) {
+    const version = versions.find((item) => item.id === id);
+    if (!version || !window.confirm(`Nonaktifkan checklist “${version.name}”? Checklist tidak akan muncul untuk permohonan baru. Request lama tetap menggunakan versi ini.`)) return;
+    setBusy(true); setError(""); setNotice("");
+    try { await api.post(`/admin/checklist-versions/${id}/deactivate`); setNotice("Checklist dinonaktifkan untuk permohonan baru."); await load(); }
+    catch (cause) { setError(getErrorMessage(cause)); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteChecklist(id: number) {
+    const version = versions.find((item) => item.id === id);
+    if (!version || !window.confirm(`Hapus permanen checklist “${version.name}” versi ${version.version_number}? Tindakan ini tidak dapat dibatalkan.`)) return;
+    setBusy(true); setError(""); setNotice("");
+    try { await api.delete(`/admin/checklist-versions/${id}`); setNotice("Checklist berhasil dihapus."); await load(); }
+    catch (cause) { setError(getErrorMessage(cause)); }
+    finally { setBusy(false); }
+  }
+
   return <main className="mx-auto max-w-6xl space-y-8 px-4 py-8 sm:px-6">
     <header className="flex items-center gap-3">
       <Link href="/dashboard" aria-label="Kembali ke dashboard" className="rounded-lg border border-slate-300 p-2 text-slate-700 hover:bg-slate-100"><ArrowLeft size={18} /></Link>
@@ -101,7 +121,7 @@ export default function ChecklistsPage() {
 
     <section className="space-y-3"><h2 className="text-lg font-semibold">Versi yang tersedia</h2>
       {loading ? <p role="status" className="text-sm text-slate-600">Memuat checklist…</p> : versions.length === 0 ? <p className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">Belum ada versi checklist. Tambahkan checklist untuk payer dan layanan yang dipakai Staff.</p> : versions.map((version) => <article key={version.id} className="rounded-xl border border-slate-200 bg-white p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{version.name} <span className="font-normal text-slate-600">· v{version.version_number}</span></h3><p className="mt-1 text-sm text-slate-600">{version.payer_name} / {version.service_type}{version.effective_date ? ` · berlaku ${version.effective_date}` : ""}</p></div>{version.is_active ? <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-1 text-sm font-medium text-emerald-800"><Check size={15} />Aktif</span> : <button disabled={busy} onClick={() => void activate(version.id)} className="min-h-10 rounded-lg border border-[#205b55] px-3 text-sm font-medium text-[#205b55] hover:bg-emerald-50 disabled:opacity-50">Aktifkan</button>}</div>
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{version.name} <span className="font-normal text-slate-600">· v{version.version_number}</span></h3><p className="mt-1 text-sm text-slate-600">{version.payer_name} / {version.service_type}{version.effective_date ? ` · berlaku ${version.effective_date}` : ""}</p></div><div className="flex flex-wrap items-center gap-2">{version.is_active ? <><span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-2.5 py-1 text-sm font-medium text-emerald-800"><Check size={15} />Aktif</span><button disabled={busy} onClick={() => void deactivate(version.id)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-amber-300 px-3 text-sm font-medium text-amber-900 hover:bg-amber-50 disabled:opacity-50"><Power size={15} />Nonaktifkan</button></> : <><button disabled={busy} onClick={() => void activate(version.id)} className="min-h-10 rounded-lg border border-[#205b55] px-3 text-sm font-medium text-[#205b55] hover:bg-emerald-50 disabled:opacity-50">Aktifkan</button><button disabled={busy} onClick={() => void deleteChecklist(version.id)} aria-label={`Hapus checklist ${version.name} versi ${version.version_number}`} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-red-300 px-3 text-sm font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"><Trash2 size={15} />Hapus</button></>}</div></div>
         <ul className="mt-4 grid gap-2 text-sm sm:grid-cols-2">{version.rules.map((rule) => <li key={rule.id} className="rounded-md bg-slate-50 p-3"><span className="font-medium">{rule.description}</span><span className="mt-1 block text-slate-600">Field: {rule.required_field_key ?? "tidak ditautkan"} · {rule.is_required ? "wajib" : "opsional"}</span></li>)}</ul>
       </article>)}
     </section>

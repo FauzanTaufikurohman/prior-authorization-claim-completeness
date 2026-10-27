@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -68,6 +69,7 @@ func NewChecklistVersionHandler(db *pgxpool.Pool) *ChecklistVersionHandler {
 }
 
 func (h *ChecklistVersionHandler) Options(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	rows, err := h.DB.Query(ctx, `
@@ -332,4 +334,100 @@ func (h *ChecklistVersionHandler) Activate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Checklist aktif untuk payer dan layanan ini.", "id": versionID})
+}
+
+func (h *ChecklistVersionHandler) Deactivate(c *gin.Context) {
+	versionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || versionID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID versi checklist tidak valid."})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penonaktifan checklist gagal dimulai."})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(9137284)`); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penonaktifan checklist gagal diproses."})
+		return
+	}
+	var active bool
+	err = tx.QueryRow(ctx, `SELECT is_active FROM checklist_versions WHERE id=$1 FOR UPDATE`, versionID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Versi checklist tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Versi checklist gagal dimuat."})
+		return
+	}
+	if !active {
+		c.JSON(http.StatusOK, gin.H{"message": "Checklist sudah nonaktif.", "id": versionID})
+		return
+	}
+	if _, err = tx.Exec(ctx, `UPDATE checklist_versions SET is_active=FALSE WHERE id=$1`, versionID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist gagal dinonaktifkan."})
+		return
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO checklist_version_audit_logs (actor_id,checklist_version_id,action) VALUES ($1,$2,'deactivated')`, c.GetInt64("user_id"), versionID); err != nil {
+		log.Printf("record checklist version %d deactivation audit failed: %v", versionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Riwayat penonaktifan checklist gagal disimpan."})
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penonaktifan checklist gagal disimpan."})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Checklist dinonaktifkan. Checklist ini tidak akan muncul untuk permohonan baru.", "id": versionID})
+}
+
+func (h *ChecklistVersionHandler) Delete(c *gin.Context) {
+	versionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || versionID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID versi checklist tidak valid."})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penghapusan checklist gagal dimulai."})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var active bool
+	err = tx.QueryRow(ctx, `SELECT is_active FROM checklist_versions WHERE id=$1 FOR UPDATE`, versionID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Versi checklist tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Versi checklist gagal dimuat."})
+		return
+	}
+	if active {
+		c.JSON(http.StatusConflict, gin.H{"error": "Nonaktifkan checklist sebelum menghapusnya."})
+		return
+	}
+	var inUse bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pa_requests WHERE checklist_version_id=$1)`, versionID).Scan(&inUse); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Pemakaian checklist gagal diperiksa."})
+		return
+	}
+	if inUse {
+		c.JSON(http.StatusConflict, gin.H{"error": "Checklist sudah terhubung ke permohonan. Nonaktifkan saja agar riwayat permohonan tetap utuh."})
+		return
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM checklist_versions WHERE id=$1 AND is_active=FALSE`, versionID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Checklist gagal dihapus."})
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penghapusan checklist gagal disimpan."})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Checklist berhasil dihapus.", "id": versionID})
 }

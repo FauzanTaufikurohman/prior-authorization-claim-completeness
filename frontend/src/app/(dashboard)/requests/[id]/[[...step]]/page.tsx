@@ -31,6 +31,7 @@ import {
   FileUp,
   XCircle,
   Download,
+  Trash2,
 } from "lucide-react";
 
 import api from "@/lib/api";
@@ -50,6 +51,9 @@ type PARequest = {
   diagnosis?: string;
   status?: string;
   checklist_version_id?: number | null;
+  provider_npi?: string;
+  ordering_provider_npi?: string;
+  servicing_provider_npi?: string;
   priority?: string;
   created_at?: string;
   updated_at?: string;
@@ -120,7 +124,8 @@ type ChecklistOption = { id: number; payer_name: string; service_type: string; r
 type RequestDraft = {
   payer_name: string;
   service_type: string;
-  provider_npi: string;
+  ordering_provider_npi: string;
+  servicing_provider_npi: string;
   patient_reference: string;
   diagnosis: string;
 };
@@ -278,6 +283,12 @@ function requestStatusClass(status?: string): string {
   if (value === "submitted") {
     return "bg-violet-50 text-violet-700 ring-violet-600/20";
   }
+  if (value === "payer_needs_information") {
+    return "bg-amber-50 text-amber-800 ring-amber-600/20";
+  }
+  if (value === "appeal_submitted") {
+    return "bg-violet-50 text-violet-700 ring-violet-600/20";
+  }
 
   return "bg-slate-100 text-slate-700 ring-slate-500/20";
 }
@@ -430,7 +441,7 @@ function PARequestDetailContent({
   const currentStep = workflowSteps[activeStepIndex];
 
   const [request, setRequest] = useState<PARequest | null>(null);
-  const [requestDraft, setRequestDraft] = useState<RequestDraft>({ payer_name: "", service_type: "", provider_npi: "", patient_reference: "", diagnosis: "" });
+  const [requestDraft, setRequestDraft] = useState<RequestDraft>({ payer_name: "", service_type: "", ordering_provider_npi: "", servicing_provider_npi: "", patient_reference: "", diagnosis: "" });
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [fields, setFields] = useState<ExtractedField[]>([]);
   const [checklist, setChecklist] = useState<ChecklistResult[]>([]);
@@ -444,6 +455,7 @@ function PARequestDetailContent({
   const [parsingDocumentID, setParsingDocumentID] = useState<number | null>(
     null,
   );
+  const [deletingDocumentID, setDeletingDocumentID] = useState<number | null>(null);
   const [confirmedPDFDocumentIDs, setConfirmedPDFDocumentIDs] = useState<
     number[]
   >([]);
@@ -472,7 +484,8 @@ function PARequestDetailContent({
         setRequestDraft({
           payer_name: String(loadedRequest.payer_name ?? ""),
           service_type: String(loadedRequest.service_type ?? ""),
-          provider_npi: String(loadedRequest.provider_npi ?? ""),
+          ordering_provider_npi: String(loadedRequest.ordering_provider_npi ?? loadedRequest.provider_npi ?? ""),
+          servicing_provider_npi: String(loadedRequest.servicing_provider_npi ?? ""),
           patient_reference: String(loadedRequest.patient_reference ?? ""),
           diagnosis: String(loadedRequest.diagnosis ?? ""),
         });
@@ -665,6 +678,25 @@ function PARequestDetailContent({
     }
   }
 
+  async function deleteDocument(document: UploadedDocument) {
+    const filename = document.original_filename ?? `dokumen #${document.id}`;
+    if (!window.confirm(`Hapus ${filename}? File dan field hasil ekstraksinya akan dihapus, lalu hasil checklist perlu dievaluasi ulang.`)) return;
+    setError("");
+    setNotice("");
+    setDeletingDocumentID(document.id);
+    try {
+      await api.delete(`/pa-requests/${requestId}/documents/${document.id}`);
+      setDocuments((current) => current.filter((item) => item.id !== document.id));
+      setConfirmedPDFDocumentIDs((current) => current.filter((id) => id !== document.id));
+      setChecklist([]);
+      setNotice(`Dokumen ${filename} dan hasil ekstraksinya dihapus.`);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setDeletingDocumentID(null);
+    }
+  }
+
   async function updateField(
     field: ExtractedField,
     fieldValue: string,
@@ -735,7 +767,7 @@ function PARequestDetailContent({
     try {
       await api.put(`/pa-requests/${requestId}`, {
         ...requestDraft,
-        provider_npi: requestDraft.provider_npi,
+        provider_npi: requestDraft.ordering_provider_npi,
       });
       setNotice("Informasi kasus diperbarui.");
       await loadData({ silent: true });
@@ -753,6 +785,8 @@ function PARequestDetailContent({
       payer_name: String(request.payer_name ?? "DATA UJI SINTETIS"),
       service_type: String(request.service_type ?? "DATA UJI SINTETIS"),
       provider_npi: "DATA UJI SINTETIS - NPI tidak diisi",
+      ordering_provider_npi: "DATA UJI SINTETIS - NPI tidak diisi",
+      servicing_provider_npi: "DATA UJI SINTETIS - NPI tidak diisi",
       diagnosis: String(request.diagnosis ?? "DATA UJI SINTETIS - bukan diagnosis pasien"),
       clinical_notes: "DATA UJI SINTETIS - bukan catatan klinis pasien",
       prior_treatments: "DATA UJI SINTETIS - contoh untuk menguji kelengkapan field, bukan informasi terapi pasien",
@@ -786,6 +820,8 @@ function PARequestDetailContent({
         ["Patient reference", request.patient_reference],
         ["Payer", request.payer_name],
         ["Service", request.service_type],
+        ["Ordering provider NPI", request.ordering_provider_npi ?? request.provider_npi],
+        ["Servicing provider NPI", request.servicing_provider_npi],
         ["Diagnosis", request.diagnosis],
         ["Status", request.status],
         ["Checklist version ID", request.checklist_version_id],
@@ -908,7 +944,11 @@ function PARequestDetailContent({
   const procedureName = displayValue(
     request.procedure_name ?? request.service_name ?? request.service_type,
   );
-  const requestStatusLabel = humanize(request.status);
+  const requestStatusLabel = request.status === "payer_needs_information"
+    ? "Payer meminta informasi"
+    : request.status === "appeal_submitted"
+      ? "Banding diajukan"
+      : humanize(request.status);
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -1066,22 +1106,29 @@ function PARequestDetailContent({
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div><h2 className="font-semibold text-slate-900">Tahap berikutnya</h2><p className="mt-1 text-sm text-slate-600">Status saat ini: {requestStatusLabel}</p></div>
             <div className="flex flex-wrap gap-2">
-              {currentUser.role === "staff" && (request.status === "draft" || request.status === "needs_information") && <>
-                <button disabled={busy} onClick={() => void transition("submit_for_review")} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white hover:bg-[#174742] disabled:opacity-50">Kirim untuk review</button>
-                <button disabled={busy} onClick={() => { const note = window.prompt("Alasan membatalkan permohonan:"); if (note?.trim()) void transition("cancel", { note }); }} className="ml-1 min-h-10 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">Batalkan</button>
+              {currentUser.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && <>
+                <button disabled={busy} onClick={() => void transition("submit_for_review")} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white hover:bg-[#174742] disabled:opacity-50">{request.status === "payer_needs_information" ? "Kirim jawaban payer untuk review" : "Kirim untuk review"}</button>
+                {(request.status === "draft" || request.status === "needs_information") && <button disabled={busy} onClick={() => { const note = window.prompt("Alasan membatalkan permohonan:"); if (note?.trim()) void transition("cancel", { note }); }} className="ml-1 min-h-10 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">Batalkan</button>}
               </>}
               {currentUser.role === "reviewer" && request.status === "ready_for_review" && <button disabled={busy} onClick={() => void transition("start_review")} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Mulai review</button>}
               {currentUser.role === "reviewer" && request.status === "in_review" && <>
                 <button disabled={busy} onClick={() => { const note = window.prompt("Sebutkan informasi atau dokumen yang harus dilengkapi Staff:"); if (note?.trim()) void transition("request_information", { note }); }} className="min-h-10 rounded-lg border border-amber-400 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50">Minta informasi</button>
                 <button disabled={busy} onClick={() => void transition("complete_review")} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Selesaikan review</button>
               </>}
-              {currentUser.role === "staff" && request.status === "ready_for_submission" && <button disabled={busy} onClick={() => { const payer_reference = window.prompt("Payer submission reference (optional):") ?? ""; void transition("record_submission", { payer_reference }); }} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Record payer submission</button>}
-              {currentUser.role === "staff" && request.status === "submitted" && <button disabled={busy} onClick={() => { const payer_decision = window.prompt("Payer outcome: approved, denied, partially_approved, or withdrawn") ?? ""; const payer_decision_note = window.prompt("Payer decision note:") ?? ""; if (payer_decision && payer_decision_note.trim()) void transition("record_decision", { payer_decision, payer_decision_note }); }} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Record payer decision</button>}
+              {currentUser.role === "staff" && request.status === "ready_for_submission" && <button disabled={busy} onClick={() => { const submission_channel = window.prompt("Kanal yang digunakan: payer_portal, clearinghouse, phone, fax, mail, api_manual, atau other", "payer_portal") ?? ""; if (!submission_channel.trim()) return; const payer_reference = window.prompt("Referensi payer (opsional):") ?? ""; void transition("record_submission", { submission_channel, payer_reference }); }} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">{statusHistory.some((event) => event.action === "request_payer_information") ? "Catat pengiriman jawaban payer" : "Catat pengajuan ke payer"}</button>}
+              {currentUser.role === "staff" && request.status === "submitted" && <>
+                <button disabled={busy} onClick={() => { const note = window.prompt("Catat informasi atau dokumen tambahan yang diminta payer:"); if (note?.trim()) void transition("request_payer_information", { note }); }} className="min-h-10 rounded-lg border border-amber-400 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50">Payer meminta informasi</button>
+                <button disabled={busy} onClick={() => { const payer_decision = window.prompt("Keputusan payer: approved, denied, partially_approved, atau withdrawn") ?? ""; const payer_decision_note = window.prompt("Catatan keputusan dan alasan payer:") ?? ""; if (payer_decision && payer_decision_note.trim()) void transition("record_decision", { payer_decision, payer_decision_note }); }} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Catat keputusan payer</button>
+              </>}
+              {currentUser.role === "staff" && request.status === "completed" && ["denied", "partially_approved"].includes(String(request.payer_decision ?? "")) && <button disabled={busy} onClick={() => { const submission_channel = window.prompt("Kanal banding: payer_portal, clearinghouse, phone, fax, mail, api_manual, atau other", "payer_portal") ?? ""; if (!submission_channel.trim()) return; const note = window.prompt("Ringkasan alasan dan dokumen pendukung banding:"); if (note?.trim()) { const appeal_reference = window.prompt("Referensi banding (opsional):") ?? ""; void transition("record_appeal_submission", { submission_channel, note, appeal_reference }); } }} className="min-h-10 rounded-lg border border-amber-400 px-4 text-sm font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50">Catat pengajuan banding</button>}
+              {currentUser.role === "staff" && request.status === "appeal_submitted" && <button disabled={busy} onClick={() => { const payer_decision = window.prompt("Keputusan banding: approved, denied, partially_approved, atau withdrawn") ?? ""; const payer_decision_note = window.prompt("Catatan respons atas banding:") ?? ""; if (payer_decision && payer_decision_note.trim()) void transition("record_appeal_decision", { payer_decision, payer_decision_note }); }} className="min-h-10 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white disabled:opacity-50">Catat respons banding</button>}
             </div>
           </div>
-          {currentUser.role === "staff" && (request.status === "draft" || request.status === "needs_information") && !request.checklist_version_id && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Checklist aktif untuk <strong>{String(request.payer_name ?? "skema belum diisi")}</strong> / <strong>{String(request.service_type ?? "alur belum diisi")}</strong> belum tersedia. Minta Admin meninjau sumber dan aturan checklist sebelum mengaktifkannya.</p>}
+          {currentUser.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && !request.checklist_version_id && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Checklist aktif untuk <strong>{String(request.payer_name ?? "skema belum diisi")}</strong> / <strong>{String(request.service_type ?? "alur belum diisi")}</strong> belum tersedia. Minta Admin meninjau sumber dan aturan checklist sebelum mengaktifkannya.</p>}
           {request.status === "needs_information" && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Permohonan dikembalikan Reviewer. <Link className="font-semibold underline underline-offset-2" href={`/requests/${requestId}/fields`}>Buka Verifikasi field</Link> untuk memperbaiki field sesuai catatan di riwayat, lalu kirim ulang sebagai Staff.</p>}
-          {request.status === "completed" && <p className="mt-3 text-sm text-slate-600">Keputusan payer: {humanize(String(request.payer_decision ?? "belum dicatat"))}. {String(request.payer_decision_note ?? "")}</p>}
+          {request.status === "payer_needs_information" && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Payer meminta informasi tambahan. Lengkapi dokumen atau field, lalu kirim jawaban untuk review internal sebelum disampaikan kembali ke payer.</p>}
+          {(request.status === "completed" || request.status === "appeal_submitted") && <p className="mt-3 text-sm text-slate-600">Keputusan payer: {humanize(String(request.payer_decision ?? "belum dicatat"))}. {String(request.payer_decision_note ?? "")}</p>}
+          {request.appeal_decision && <p className="mt-2 text-sm text-slate-600">Respons banding: {humanize(String(request.appeal_decision))}. {String(request.appeal_decision_note ?? "")}</p>}
         </section>
       )}
 
@@ -1148,6 +1195,18 @@ function PARequestDetailContent({
           />
 
           <InfoItem
+            icon={<UserRound className="h-4 w-4" />}
+            label="Ordering provider NPI"
+            value={String(request.ordering_provider_npi ?? request.provider_npi ?? "Belum diisi")}
+          />
+
+          <InfoItem
+            icon={<UserRound className="h-4 w-4" />}
+            label="Servicing provider NPI"
+            value={String(request.servicing_provider_npi ?? "Belum diisi")}
+          />
+
+          <InfoItem
             icon={<CalendarDays className="h-4 w-4" />}
             label="Tanggal dibuat"
             value={formatDate(request.created_at)}
@@ -1162,11 +1221,11 @@ function PARequestDetailContent({
             </p>
           </div>
         )}
-        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information") && <form onSubmit={saveRequestDetails} className="mt-6 space-y-4 border-t border-slate-100 pt-5">
+        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && <form onSubmit={saveRequestDetails} className="mt-6 space-y-4 border-t border-slate-100 pt-5">
           <h3 className="font-semibold text-slate-900">Edit request information</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1 text-sm font-medium text-slate-700">Patient / member reference<input value={requestDraft.patient_reference} onChange={(event) => setRequestDraft({ ...requestDraft, patient_reference: event.target.value })} maxLength={100} className="min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#205b55]" /></label>
-            {([ ["payer_name", "Payer"], ["service_type", "Service"], ["provider_npi", "Provider NPI"] ] as const).map(([key, label]) => <label key={key} className="space-y-1 text-sm font-medium text-slate-700">{label}<input value={requestDraft[key]} onChange={(event) => setRequestDraft({ ...requestDraft, [key]: event.target.value })} maxLength={150} className="min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#205b55]" /></label>)}
+            {([ ["payer_name", "Payer"], ["service_type", "Requested service"], ["ordering_provider_npi", "Ordering provider NPI"], ["servicing_provider_npi", "Servicing provider NPI"] ] as const).map(([key, label]) => <label key={key} className="space-y-1 text-sm font-medium text-slate-700">{label}<input value={requestDraft[key]} onChange={(event) => setRequestDraft({ ...requestDraft, [key]: key.endsWith("_npi") ? event.target.value.replace(/\D/g, "").slice(0, 10) : event.target.value })} maxLength={key.endsWith("_npi") ? 10 : 150} inputMode={key.endsWith("_npi") ? "numeric" : undefined} className="min-h-10 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#205b55]" /></label>)}
             <label className="space-y-1 text-sm font-medium text-slate-700 sm:col-span-2">Diagnosis / kode sebagaimana tercantum<textarea value={requestDraft.diagnosis} onChange={(event) => setRequestDraft({ ...requestDraft, diagnosis: event.target.value })} maxLength={2000} rows={3} className="w-full rounded-lg border border-slate-300 px-3 py-2 font-normal focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#205b55]" /></label>
           </div>
           <div className="flex justify-end"><button disabled={busy} className="min-h-10 rounded-lg border border-slate-300 px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50">Simpan informasi</button></div>
@@ -1185,9 +1244,9 @@ function PARequestDetailContent({
           description="Unggah CSV atau PDF berbasis teks (maksimum 10 MB). PDF hasil scan/OCR belum didukung."
         />
 
-        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information") && <div className="mb-5 rounded-lg bg-[#f3f8f6] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#173f45]">Tidak punya dokumen untuk uji?</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">Unduh CSV contoh yang mengikuti field wajib checklist permohonan ini. Isinya data sintetis, bukan fakta medis; gunakan hanya untuk latihan.</p></div><button type="button" disabled={sampleFieldKeys.length === 0} onClick={downloadSyntheticCSV} className="min-h-10 rounded-lg border border-[#205b55] bg-white px-3 text-sm font-semibold text-[#205b55] hover:bg-[#e6f1ee] disabled:cursor-not-allowed disabled:opacity-50">Unduh CSV data uji</button></div></div>}
+        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && <div className="mb-5 rounded-lg bg-[#f3f8f6] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#173f45]">Tidak punya dokumen untuk uji?</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">Unduh CSV contoh yang mengikuti field wajib checklist permohonan ini. Isinya data sintetis, bukan fakta medis; gunakan hanya untuk latihan.</p></div><button type="button" disabled={sampleFieldKeys.length === 0} onClick={downloadSyntheticCSV} className="min-h-10 rounded-lg border border-[#205b55] bg-white px-3 text-sm font-semibold text-[#205b55] hover:bg-[#e6f1ee] disabled:cursor-not-allowed disabled:opacity-50">Unduh CSV data uji</button></div></div>}
 
-        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information") ? <form
+        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") ? <form
           onSubmit={uploadDocument}
           className="space-y-4"
         >
@@ -1312,7 +1371,7 @@ function PARequestDetailContent({
                         type="button"
                         onClick={() => void parseDocument(document)}
                         disabled={
-                          parsingDocumentID !== null || currentUser?.role !== "staff" || (request.status !== "draft" && request.status !== "needs_information") ||
+                          parsingDocumentID !== null || currentUser?.role !== "staff" || (request.status !== "draft" && request.status !== "needs_information" && request.status !== "payer_needs_information") ||
                           (isPDF && !isConfirmed)
                         }
                         className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1332,6 +1391,7 @@ function PARequestDetailContent({
                               ? "Proses ulang"
                               : "Parse dokumen"}
                       </button>
+                      {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && <button type="button" onClick={() => void deleteDocument(document)} disabled={isParsing || parsingDocumentID !== null || deletingDocumentID !== null || document.parsing_status === "processing"} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-red-300 px-3 text-sm font-semibold text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-4 w-4" />{deletingDocumentID === document.id ? "Menghapus…" : "Hapus dokumen"}</button>}
                     </div>
                   </div>
                 </article>
@@ -1419,7 +1479,7 @@ function PARequestDetailContent({
                 key={`${field.id}-${field.field_value ?? ""}-${field.verification_status}`}
                 field={field}
                 saving={savingField === field.id}
-                editable={currentUser?.role === "reviewer" ? request.status === "in_review" : currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information")}
+                editable={currentUser?.role === "reviewer" ? request.status === "in_review" : currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information")}
                 allowStatus={currentUser?.role === "reviewer" && request.status === "in_review"}
                 onSave={(value, status) =>
                   updateField(field, value, status)

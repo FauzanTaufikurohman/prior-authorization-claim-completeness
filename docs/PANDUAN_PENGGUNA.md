@@ -7,12 +7,13 @@ Admin menyiapkan akun dan checklist di aplikasi. Buat versi checklist untuk komb
 ## Alur Staff
 
 1. Buka **PA Requests** lalu buat permohonan. Isi payer, jenis layanan, referensi pasien, diagnosis, dan NPI penyedia bila tersedia. NPI adalah 10 digit; gunakan tombol pencarian untuk mencocokkan data CMS. NPI tidak menggantikan persyaratan payer.
-2. Buka halaman permohonan dan unggah dokumen CSV (`field,value`) atau PDF berbasis teks. PDF hasil scan belum didukung.
-3. Jalankan parsing. AI membantu mengekstrak field dari PDF; CSV diproses dengan aturan tetap. Periksa bukti sumber dan koreksi nilai bila perlu. AI tidak menentukan kelayakan atau keputusan payer.
+2. Buka halaman permohonan dan unggah CSV bertabel atau PDF berbasis teks. Parser membaca pasangan label dan nilai dari baris berisi `:` atau `=`, serta nilai dari kolom tabel. PDF hasil scan belum didukung.
+3. Jalankan parsing. Parser membaca pasangan label-nilai secara lokal; AI dapat membantu menemukan field semantik pada PDF. Periksa bukti sumber dan koreksi nilai bila perlu. AI tidak menentukan kelayakan atau keputusan payer.
 4. Pilih **Kirim untuk review**. Permohonan masuk ke antrian Reviewer setelah dokumen berhasil diproses dan checklist aktif ditemukan.
 5. Jika Reviewer meminta informasi, status menjadi **Perlu informasi**. Lengkapi data/dokumen sesuai catatan di riwayat permohonan, lalu kirim ulang.
-6. Setelah Reviewer menyelesaikan pemeriksaan, status menjadi **Siap diajukan**. Staff mengajukan ke payer di luar aplikasi, lalu pilih **Catat pengajuan ke payer** dan masukkan nomor referensi bila ada.
-7. Saat keputusan payer diterima, pilih **Catat keputusan payer**, pilih outcome, dan tulis catatan. Status selesai dan outcome disimpan terpisah.
+6. Setelah Reviewer menyelesaikan pemeriksaan, status menjadi **Siap diajukan**. Staff mengajukan ke payer di luar aplikasi, lalu mencatat kanal pengajuan dan nomor referensi bila ada.
+7. Jika payer meminta informasi, catat permintaan, lengkapi dokumen, lalu kirim tambahan untuk review internal sebelum mengajukannya kembali.
+8. Saat keputusan payer diterima, pilih outcome dan tulis alasannya. Untuk keputusan ditolak atau disetujui sebagian, Staff dapat mencatat pengajuan banding dan responsnya.
 
 Draft dapat diubah atau dibatalkan oleh Staff pemilik. Setelah dikirim, perubahan dokumen dan data hanya dibuka kembali bila Reviewer meminta informasi.
 
@@ -47,8 +48,9 @@ Reviewer memeriksa kelengkapan dan bukti; keputusan akhir tetap berasal dari pay
 
 ## File dan privasi
 
-- CSV memerlukan header `field,value`; PDF harus berupa PDF berbasis teks.
+- CSV dapat memakai nama header yang berbeda. Dua kolom pertama dibaca sebagai label dan nilai; tabel dengan tiga kolom atau lebih memakai header sebagai nama field. PDF berbasis teks juga dibaca untuk pasangan label dan nilai yang dipisahkan `:` atau `=`. PDF hasil scan belum didukung.
 - Ukuran maksimum file adalah 10 MiB.
 - Sebelum mengirim teks PDF ke OpenAI, Staff harus mengonfirmasi bahwa data sintetis atau sudah di-de-identifikasi.
 - Hasil AI perlu diperiksa manusia dan bukan rekomendasi persetujuan medis. Status checklist menunjukkan kecocokan field dengan aturan yang dikonfigurasi, bukan keputusan klinis atau keputusan payer.
+- Pengajuan, jawaban tambahan, dan banding berlangsung di kanal payer di luar aplikasi. Proses dan tenggat commercial plan berbeda menurut produk dan yurisdiksi; validasi aturan payer sebelum memakai checklist dalam operasi nyata.
 - Backend menerapkan migrasi database yang belum tercatat saat mulai. Jika migrasi gagal, backend berhenti dengan pesan kesalahan yang menyebutkan versi migrasi.

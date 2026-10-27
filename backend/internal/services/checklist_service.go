@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -54,13 +55,35 @@ func EvaluateChecklist(
 	requestID int64,
 	reviewerIDs ...int64,
 ) (*ChecklistEvaluation, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin checklist evaluation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	evaluation, err := EvaluateChecklistInTx(ctx, tx, requestID, reviewerIDs...)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit checklist evaluation: %w", err)
+	}
+	return evaluation, nil
+}
+
+func EvaluateChecklistInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	requestID int64,
+	reviewerIDs ...int64,
+) (*ChecklistEvaluation, error) {
 	var reviewerID *int64
 	if len(reviewerIDs) > 0 && reviewerIDs[0] > 0 {
 		reviewerID = &reviewerIDs[0]
 	}
 	var versionID *int64
 
-	err := pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT checklist_version_id
 		FROM pa_requests
 		WHERE id = $1
@@ -77,7 +100,7 @@ func EvaluateChecklist(
 		return nil, fmt.Errorf("PA request has no checklist version assigned")
 	}
 
-	rows, err := pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT id, rule_key, description, required_field_key
 		FROM checklist_rules
 		WHERE checklist_version_id = $1
@@ -113,12 +136,6 @@ func EvaluateChecklist(
 		return nil, fmt.Errorf("checklist version has no required field rules")
 	}
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin checklist evaluation: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
 	evaluation := &ChecklistEvaluation{
 		PARequestID: requestID,
 		Results:     make([]ChecklistResult, 0, len(rules)),
@@ -126,7 +143,7 @@ func EvaluateChecklist(
 
 	for _, rule := range rules {
 		var field extractedField
-
+		providerRole := providerNPIFieldRole(rule.FieldKey)
 		err := tx.QueryRow(ctx, `
 			SELECT field_value, verification_status, evidence_text
 			FROM extracted_fields
@@ -139,6 +156,24 @@ func EvaluateChecklist(
 			&field.VerificationStatus,
 			&field.EvidenceText,
 		)
+		if providerRole != "" && (errors.Is(err, pgx.ErrNoRows) || (err == nil && field.VerificationStatus != "verified" && field.VerificationStatus != "corrected")) {
+			var value string
+			requestErr := tx.QueryRow(ctx, `
+				SELECT CASE WHEN $2 = 'ordering' THEN COALESCE(NULLIF(ordering_provider_npi, ''), provider_npi, '')
+				            ELSE COALESCE(servicing_provider_npi, '') END
+				FROM pa_requests WHERE id=$1 AND deleted_at IS NULL
+			`, requestID, providerRole).Scan(&value)
+			if requestErr != nil {
+				return nil, fmt.Errorf("load request provider NPI for checklist field %q: %w", rule.FieldKey, requestErr)
+			}
+			if strings.TrimSpace(value) != "" {
+				evidence := "NPI entered in PA request as " + providerRole + " provider. Reviewer verification is still required."
+				field.Value = &value
+				field.VerificationStatus = "pending"
+				field.EvidenceText = &evidence
+				err = nil
+			}
+		}
 
 		var status string
 		var reason string
@@ -215,11 +250,19 @@ func EvaluateChecklist(
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit checklist evaluation: %w", err)
-	}
-
 	return evaluation, nil
+}
+
+func providerNPIFieldRole(fieldKey string) string {
+	key := strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(strings.TrimSpace(fieldKey)))
+	switch key {
+	case "provider_npi", "ordering_provider_npi":
+		return "ordering"
+	case "servicing_provider_npi":
+		return "servicing"
+	default:
+		return ""
+	}
 }
 
 func evaluateExtractedField(field extractedField, found bool) (string, string, *string) {

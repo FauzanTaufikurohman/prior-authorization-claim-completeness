@@ -86,6 +86,8 @@ func DefaultAIFieldDefinitions() []AIFieldDefinition {
 		{Key: "payer_name", Description: "Health plan or payer name."},
 		{Key: "service_type", Description: "Requested service, procedure, or medication."},
 		{Key: "provider_npi", Description: "Provider's 10-digit NPI."},
+		{Key: "ordering_provider_npi", Description: "Ordering or referring provider's 10-digit NPI."},
+		{Key: "servicing_provider_npi", Description: "Servicing or rendering provider's 10-digit NPI."},
 		{Key: "diagnosis", Description: "Diagnosis or diagnosis code."},
 		{Key: "clinical_notes", Description: "Relevant supporting clinical notes."},
 		{Key: "prior_treatments", Description: "Prior therapies or treatments documented."},

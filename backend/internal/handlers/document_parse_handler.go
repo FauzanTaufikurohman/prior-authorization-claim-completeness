@@ -92,7 +92,7 @@ func (h *DocumentHandler) Parse(c *gin.Context) {
 	}
 
 	allowed := role == "staff" && userID == doc.CreatedBy &&
-		(doc.Status == "draft" || doc.Status == "needs_information")
+		(doc.Status == "draft" || doc.Status == "needs_information" || doc.Status == "payer_needs_information")
 
 	if !allowed {
 		c.JSON(http.StatusNotFound, gin.H{
@@ -196,7 +196,7 @@ func (h *DocumentHandler) Parse(c *gin.Context) {
 			}
 		case isCSV:
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error": "Parsing CSV gagal. Pastikan file memiliki header field,value dan data yang valid.",
+				"error": "Parsing CSV gagal. Pastikan file memiliki header tabel dan baris data yang valid.",
 			})
 		default:
 			c.JSON(http.StatusBadGateway, gin.H{
@@ -312,7 +312,7 @@ func (h *DocumentHandler) extractDocumentFields(
 	requestID int64,
 ) ([]parsedDocumentField, error) {
 	if strings.EqualFold(doc.MIMEType, "text/csv") {
-		csvFields, err := services.ParseCSVFields(content)
+		csvFields, err := services.ParseFlexibleCSVFields(content)
 		if err != nil {
 			return nil, err
 		}
@@ -335,6 +335,10 @@ func (h *DocumentHandler) extractDocumentFields(
 	if err != nil {
 		return nil, err
 	}
+
+	// Parse explicit labels, key/value lines, and simple table rows locally so
+	// documents with arbitrary labels do not depend on a fixed AI field list.
+	keyValueFields := services.ParseKeyValueText(documentText)
 
 	definitions := services.DefaultAIFieldDefinitions()
 	rows, err := h.DB.Query(ctx, `
@@ -374,11 +378,36 @@ func (h *DocumentHandler) extractDocumentFields(
 		definitions,
 	)
 	if err != nil {
+		// Deterministic key/value extraction remains useful when no AI key is
+		// configured. AI-only semantic extraction still requires the provider.
+		if errors.Is(err, services.ErrOpenAIKeyMissing) && len(keyValueFields) > 0 {
+			fields := make([]parsedDocumentField, 0, len(keyValueFields))
+			for _, field := range keyValueFields {
+				value, evidence := field.Value, field.Evidence
+				fields = append(fields, parsedDocumentField{
+					Key: field.Key, Value: &value, EvidenceText: &evidence,
+					VerificationStatus: "pending",
+				})
+			}
+			return fields, nil
+		}
 		return nil, err
 	}
 
-	fields := make([]parsedDocumentField, 0, len(extracted))
+	fields := make([]parsedDocumentField, 0, len(extracted)+len(keyValueFields))
+	seen := make(map[string]struct{}, len(extracted)+len(keyValueFields))
+	for _, field := range keyValueFields {
+		value, evidence := field.Value, field.Evidence
+		fields = append(fields, parsedDocumentField{
+			Key: field.Key, Value: &value, EvidenceText: &evidence,
+			VerificationStatus: "pending",
+		})
+		seen[field.Key] = struct{}{}
+	}
 	for _, field := range extracted {
+		if _, exists := seen[field.Key]; exists {
+			continue
+		}
 		fields = append(fields, parsedDocumentField{
 			Key:                field.Key,
 			Value:              field.Value,
@@ -386,6 +415,7 @@ func (h *DocumentHandler) extractDocumentFields(
 			EvidenceText:       field.EvidenceText,
 			VerificationStatus: field.VerificationStatus,
 		})
+		seen[field.Key] = struct{}{}
 	}
 	return fields, nil
 }

@@ -53,6 +53,7 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 
 				requests.GET("/:id/documents", documents.List)
 				requests.POST("/:id/documents", documents.Upload)
+				requests.DELETE("/:id/documents/:documentId", documents.Delete)
 				requests.POST("/:id/documents/:documentId/parse", documents.Parse)
 
 				requests.GET("/:id/fields", fields.List)
@@ -69,6 +70,8 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 				adminChecklists.GET("", checklistVersions.List)
 				adminChecklists.POST("", checklistVersions.Create)
 				adminChecklists.POST("/:id/activate", checklistVersions.Activate)
+				adminChecklists.POST("/:id/deactivate", checklistVersions.Deactivate)
+				adminChecklists.DELETE("/:id", checklistVersions.Delete)
 			}
 		}
 

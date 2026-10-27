@@ -16,7 +16,7 @@ Use synthetic or de-identified documents for development and demos. Do not
 process identifiable patient data until the required privacy, security, and
 vendor-contract review is complete.
 
-The MVP parses CSV files with `field,value` columns and text-based PDFs.
+The MVP parses two-column CSVs as label/value pairs regardless of header names, wider CSV tables by their header labels, and text-based PDFs for `:` or `=` pairs and simple tables. Scanned PDFs are not supported.
 Scanned PDFs and OCR are not supported. Every AI-extracted field starts in
 pending review and must be verified by a person before checklist results are
 treated as complete.

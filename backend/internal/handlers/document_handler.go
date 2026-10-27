@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,6 +138,102 @@ func (h *DocumentHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": documents})
 }
 
+func (h *DocumentHandler) Delete(c *gin.Context) {
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database service unavailable."})
+		return
+	}
+	requestID, ok := parseRequestID(c)
+	if !ok {
+		return
+	}
+	documentID, err := strconv.ParseInt(c.Param("documentId"), 10, 64)
+	if err != nil || documentID < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID dokumen tidak valid."})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	tx, err := h.DB.Begin(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penghapusan dokumen gagal dimulai."})
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var createdBy int64
+	var requestStatus string
+	err = tx.QueryRow(ctx, `SELECT created_by, status FROM pa_requests WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, requestID).Scan(&createdBy, &requestStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "PA request tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "PA request gagal diperiksa."})
+		return
+	}
+	if c.GetString("role") != "staff" || c.GetInt64("user_id") != createdBy {
+		c.JSON(http.StatusNotFound, gin.H{"error": "PA request tidak ditemukan."})
+		return
+	}
+	if requestStatus != "draft" && requestStatus != "needs_information" && requestStatus != "payer_needs_information" {
+		c.JSON(http.StatusConflict, gin.H{"error": "Dokumen hanya dapat dihapus saat draft atau ketika Staff sedang melengkapi permintaan informasi."})
+		return
+	}
+	var storageKey, parsingStatus string
+	err = tx.QueryRow(ctx, `SELECT storage_key, parsing_status FROM documents WHERE id=$1 AND pa_request_id=$2 FOR UPDATE`, documentID, requestID).Scan(&storageKey, &parsingStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Dokumen tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Metadata dokumen gagal dimuat."})
+		return
+	}
+	if parsingStatus == "processing" {
+		c.JSON(http.StatusConflict, gin.H{"error": "Dokumen sedang diproses. Tunggu sampai parsing selesai sebelum menghapusnya."})
+		return
+	}
+	if storageKey == "" || filepath.Base(storageKey) != storageKey || storageKey == "." || storageKey == ".." {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lokasi penyimpanan dokumen tidak valid."})
+		return
+	}
+	storageRoot, err := filepath.Abs(h.StorageRoot)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lokasi penyimpanan dokumen tidak valid."})
+		return
+	}
+	storagePath, err := filepath.Abs(filepath.Join(storageRoot, storageKey))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lokasi file dokumen tidak valid."})
+		return
+	}
+	relativePath, err := filepath.Rel(storageRoot, storagePath)
+	if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(os.PathSeparator)) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lokasi file dokumen berada di luar penyimpanan."})
+		return
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM extracted_fields WHERE pa_request_id=$1 AND document_id=$2`, requestID, documentID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Field hasil ekstraksi dokumen gagal dibersihkan."})
+		return
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM checklist_results WHERE pa_request_id=$1`, requestID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Hasil checklist lama gagal dibersihkan."})
+		return
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM documents WHERE id=$1 AND pa_request_id=$2`, documentID, requestID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Metadata dokumen gagal dihapus."})
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Penghapusan dokumen gagal disimpan."})
+		return
+	}
+	if err = os.Remove(storagePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("delete document %d storage cleanup failed: %v", documentID, err)
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Dokumen dan field hasil ekstraksinya berhasil dihapus."})
+}
+
 func (h *DocumentHandler) Upload(c *gin.Context) {
 	if h.DB == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -184,8 +282,8 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 		})
 		return
 	}
-	if requestStatus != "draft" && requestStatus != "needs_information" {
-		c.JSON(http.StatusConflict, gin.H{"error": "Dokumen hanya dapat ditambah saat draft atau setelah permohonan dikembalikan Reviewer."})
+	if requestStatus != "draft" && requestStatus != "needs_information" && requestStatus != "payer_needs_information" {
+		c.JSON(http.StatusConflict, gin.H{"error": "Dokumen hanya dapat ditambah saat draft atau ketika Staff sedang melengkapi permintaan informasi."})
 		return
 	}
 

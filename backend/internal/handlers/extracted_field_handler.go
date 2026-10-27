@@ -184,7 +184,7 @@ WHERE ef.id = $1
 	role := c.GetString("role")
 	userID := c.GetInt64("user_id")
 	allowed := (role == "staff" && userID == createdBy && input.VerificationStatus == nil &&
-		(requestStatus == "draft" || requestStatus == "needs_information")) ||
+		(requestStatus == "draft" || requestStatus == "needs_information" || requestStatus == "payer_needs_information")) ||
 		(role == "reviewer" && requestStatus == "in_review")
 
 	if !allowed {

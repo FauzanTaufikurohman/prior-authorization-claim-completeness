@@ -1,6 +1,8 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Prior Authorization Assistant
+## Ayuprama
+
+Ayuprama is a workspace for preparing prior authorization requests and reviewing claim completeness. The public home page introduces the workflow before staff sign in.
 
 Copy `frontend/.env.example` to `frontend/.env.local` and
 `backend/.env.example` to `backend/.env`. Set `BACKEND_API_URL` to the Go API,
@@ -20,6 +22,12 @@ The MVP parses two-column CSVs as label/value pairs regardless of header names, 
 Scanned PDFs and OCR are not supported. Every AI-extracted field starts in
 pending review and must be verified by a person before checklist results are
 treated as complete.
+
+## Upload pasien dan notifikasi WhatsApp
+
+Staff dapat membuat link upload dari tahap Dokumen pada permohonan. Link memakai token akses acak, bukan ID PA, dan berlaku selama permohonan masih menerima dokumen. Membuat link baru akan menonaktifkan link sebelumnya. Pengguna link dapat mengunggah CSV atau PDF tanpa login; proses review dan tindak lanjut tetap dilakukan Staff.
+
+Form upload meminta nomor WhatsApp aktif dan persetujuan untuk menerima notifikasi status PA. Nomor berasal dari pengguna, tidak dibuat otomatis, dan disimpan bersama permohonan saat dokumen berhasil diunggah. Backend mengirim pembaruan status tanpa mencantumkan diagnosis atau isi dokumen. Atur `FONNTE_ACCOUNT_TOKEN` hanya di `backend/.env`; token tidak boleh dimasukkan ke frontend.
 
 ## Getting Started
 

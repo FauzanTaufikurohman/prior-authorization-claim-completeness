@@ -32,6 +32,7 @@ import {
   XCircle,
   Download,
   Trash2,
+  Copy,
 } from "lucide-react";
 
 import api from "@/lib/api";
@@ -449,9 +450,11 @@ function PARequestDetailContent({
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([]);
   const [sampleFieldKeys, setSampleFieldKeys] = useState<string[]>([]);
   const [historyUnavailable, setHistoryUnavailable] = useState(false);
+  const [patientUploadLink, setPatientUploadLink] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [creatingUploadLink, setCreatingUploadLink] = useState(false);
   const [parsingDocumentID, setParsingDocumentID] = useState<number | null>(
     null,
   );
@@ -755,11 +758,49 @@ function PARequestDetailContent({
   async function transition(action: string, extra: Record<string, string> = {}) {
     setError(""); setNotice(""); setBusy(true);
     try {
-      await api.post(`/pa-requests/${requestId}/transitions`, { action, ...extra }, { timeout: 100_000 });
-      setNotice("Tahap permohonan diperbarui.");
+      const response = await api.post<{
+        data: { whatsapp_notification?: { status?: string; message?: string } };
+      }>(`/pa-requests/${requestId}/transitions`, { action, ...extra }, { timeout: 100_000 });
+      const notification = response.data.data.whatsapp_notification;
+      const message = `Status permohonan berhasil disimpan. ${notification?.message ?? ""}`.trim();
       await loadData({ silent: true });
+      if (notification?.status === "failed") {
+        setError((current) => [current, message].filter(Boolean).join(" "));
+      } else {
+        setNotice(message);
+      }
     } catch (cause) { setError(workflowErrorMessage(cause)); }
     finally { setBusy(false); }
+  }
+
+  async function createPatientUploadLink() {
+    setError("");
+    setNotice("");
+    setCreatingUploadLink(true);
+    try {
+      const response = await api.post<{ data: { token: string } }>(
+        `/pa-requests/${requestId}/upload-link`,
+      );
+      const link = new URL("/upload-user", window.location.origin);
+      link.hash = response.data.data.token;
+      setPatientUploadLink(link.toString());
+      setNotice("Link upload pasien berhasil dibuat.");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setCreatingUploadLink(false);
+    }
+  }
+
+  async function copyPatientUploadLink() {
+    if (!patientUploadLink) return;
+    try {
+      await navigator.clipboard.writeText(patientUploadLink);
+      setNotice("Link upload pasien berhasil disalin.");
+      setError("");
+    } catch {
+      setError("Link tidak dapat disalin otomatis. Pilih dan salin link dari kolom yang tersedia.");
+    }
   }
 
   async function saveRequestDetails(event: React.FormEvent<HTMLFormElement>) {
@@ -1128,7 +1169,7 @@ function PARequestDetailContent({
           {request.status === "needs_information" && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Permohonan dikembalikan Reviewer. <Link className="font-semibold underline underline-offset-2" href={`/requests/${requestId}/fields`}>Buka Verifikasi field</Link> untuk memperbaiki field sesuai catatan di riwayat, lalu kirim ulang sebagai Staff.</p>}
           {request.status === "payer_needs_information" && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Payer meminta informasi tambahan. Lengkapi dokumen atau field, lalu kirim jawaban untuk review internal sebelum disampaikan kembali ke payer.</p>}
           {(request.status === "completed" || request.status === "appeal_submitted") && <p className="mt-3 text-sm text-slate-600">Keputusan payer: {humanize(String(request.payer_decision ?? "belum dicatat"))}. {String(request.payer_decision_note ?? "")}</p>}
-          {request.appeal_decision && <p className="mt-2 text-sm text-slate-600">Respons banding: {humanize(String(request.appeal_decision))}. {String(request.appeal_decision_note ?? "")}</p>}
+          {!!request.appeal_decision && <p className="mt-2 text-sm text-slate-600">Respons banding: {humanize(String(request.appeal_decision))}. {String(request.appeal_decision_note ?? "")}</p>}
         </section>
       )}
 
@@ -1243,6 +1284,47 @@ function PARequestDetailContent({
           title="Upload dokumen"
           description="Unggah CSV atau PDF berbasis teks (maksimum 10 MB). PDF hasil scan/OCR belum didukung."
         />
+
+        {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && (
+          <div className="mb-5 rounded-xl border border-[#b8d5ca] bg-[#f3f8f6] p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-[#173f45]">Link upload pasien</h3>
+                <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-700">
+                  Pasien dapat mengirim dokumen tanpa login. Link baru akan menonaktifkan link sebelumnya.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void createPatientUploadLink()}
+                disabled={creatingUploadLink || busy}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#205b55] bg-white px-4 text-sm font-semibold text-[#174742] hover:bg-[#e6f1ee] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingUploadLink ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                {patientUploadLink ? "Buat link baru" : "Buat link upload"}
+              </button>
+            </div>
+            {patientUploadLink && (
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <input
+                  aria-label="Link halaman upload pasien"
+                  readOnly
+                  value={patientUploadLink}
+                  className="min-h-11 min-w-0 flex-1 rounded-lg border border-slate-400 bg-white px-3 text-sm text-slate-900"
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => void copyPatientUploadLink()}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[#205b55] px-4 text-sm font-semibold text-white hover:bg-[#174742]"
+                >
+                  <Copy className="h-4 w-4" />
+                  Salin link
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {currentUser?.role === "staff" && (request.status === "draft" || request.status === "needs_information" || request.status === "payer_needs_information") && <div className="mb-5 rounded-lg bg-[#f3f8f6] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold text-[#173f45]">Tidak punya dokumen untuk uji?</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">Unduh CSV contoh yang mengikuti field wajib checklist permohonan ini. Isinya data sintetis, bukan fakta medis; gunakan hanya untuk latihan.</p></div><button type="button" disabled={sampleFieldKeys.length === 0} onClick={downloadSyntheticCSV} className="min-h-10 rounded-lg border border-[#205b55] bg-white px-3 text-sm font-semibold text-[#205b55] hover:bg-[#e6f1ee] disabled:cursor-not-allowed disabled:opacity-50">Unduh CSV data uji</button></div></div>}
 

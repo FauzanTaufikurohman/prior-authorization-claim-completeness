@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ type paTransitionInput struct {
 type requestWorkflowState struct {
 	ID                   int64
 	CreatedBy            int64
+	RequestNumber        string
 	PayerName            string
 	ServiceType          string
 	Status               string
@@ -37,6 +39,8 @@ type requestWorkflowState struct {
 	ChecklistVersion     *int64
 	OrderingProviderNPI  string
 	ServicingProviderNPI string
+	WhatsAppNumber       string
+	WhatsAppConsented    bool
 }
 
 func NewPAWorkflowHandler(db *pgxpool.Pool) *PAWorkflowHandler {
@@ -107,10 +111,11 @@ func (h *PAWorkflowHandler) Transition(c *gin.Context) {
 
 	var request requestWorkflowState
 	err = tx.QueryRow(ctx, `
-		SELECT id, created_by, payer_name, service_type, status, payer_decision, appeal_decision, checklist_version_id,
-		       COALESCE(ordering_provider_npi, provider_npi, ''), COALESCE(servicing_provider_npi, '')
+		SELECT id, created_by, request_number, payer_name, service_type, status, payer_decision, appeal_decision, checklist_version_id,
+		       COALESCE(ordering_provider_npi, provider_npi, ''), COALESCE(servicing_provider_npi, ''),
+		       COALESCE(whatsapp_number, ''), whatsapp_notifications_consented_at IS NOT NULL
 		FROM pa_requests WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
-	`, requestID).Scan(&request.ID, &request.CreatedBy, &request.PayerName, &request.ServiceType, &request.Status, &request.PayerDecision, &request.AppealDecision, &request.ChecklistVersion, &request.OrderingProviderNPI, &request.ServicingProviderNPI)
+	`, requestID).Scan(&request.ID, &request.CreatedBy, &request.RequestNumber, &request.PayerName, &request.ServiceType, &request.Status, &request.PayerDecision, &request.AppealDecision, &request.ChecklistVersion, &request.OrderingProviderNPI, &request.ServicingProviderNPI, &request.WhatsAppNumber, &request.WhatsAppConsented)
 	if errors.Is(err, pgx.ErrNoRows) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Permohonan tidak ditemukan."})
 		return
@@ -383,6 +388,37 @@ func (h *PAWorkflowHandler) Transition(c *gin.Context) {
 		return
 	}
 	data := gin.H{"id": request.ID, "status": updatedStatus}
+	notificationStatus := "skipped"
+	notificationMessage := "Nomor WhatsApp dan persetujuan notifikasi pasien belum terdaftar."
+	if request.WhatsAppNumber != "" && request.WhatsAppConsented {
+		fonnteToken := strings.TrimSpace(os.Getenv("FONNTE_ACCOUNT_TOKEN"))
+		if fonnteToken == "" {
+			notificationStatus = "failed"
+			notificationMessage = "Status tersimpan, tetapi token Fonnte belum dikonfigurasi."
+			log.Printf("WhatsApp notification for PA request %d not sent: FONNTE_ACCOUNT_TOKEN is empty", request.ID)
+		} else {
+			notificationContext, notificationCancel := context.WithTimeout(context.Background(), 12*time.Second)
+			err := services.SendFonnteMessage(
+				notificationContext,
+				fonnteToken,
+				request.WhatsAppNumber,
+				services.BuildPAStatusMessage(request.RequestNumber, updatedStatus, input.Action, input.PayerDecision),
+			)
+			notificationCancel()
+			if err != nil {
+				notificationStatus = "failed"
+				notificationMessage = "Status tersimpan, tetapi notifikasi WhatsApp gagal dikirim."
+				log.Printf("WhatsApp notification for PA request %d (%s) failed: %v", request.ID, updatedStatus, err)
+			} else {
+				notificationStatus = "sent"
+				notificationMessage = "Notifikasi WhatsApp berhasil dikirim."
+			}
+		}
+	}
+	data["whatsapp_notification"] = gin.H{
+		"status":  notificationStatus,
+		"message": notificationMessage,
+	}
 	if input.Action == "record_appeal_decision" {
 		data["appeal_decision"] = nullableString(input.PayerDecision)
 	} else {

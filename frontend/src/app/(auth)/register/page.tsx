@@ -2,8 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { LockKeyhole, Mail, ShieldCheck, UserRound } from "lucide-react";
+import { LockKeyhole, Mail, UserRound } from "lucide-react";
 import api from "@/lib/api";
+import { BrandLogo } from "@/components/brand-logo";
 
 function errorMessage(error: unknown) {
   if (typeof error === "object" && error !== null && "response" in error) {
@@ -46,20 +47,20 @@ export default function RegisterPage() {
         <div className="absolute -right-28 -top-24 h-96 w-96 rounded-full border border-white/10" aria-hidden="true" />
         <div className="absolute -bottom-40 -left-24 h-[34rem] w-[34rem] rounded-full border border-white/10" aria-hidden="true" />
         <div className="relative flex items-center gap-3">
-          <div className="rounded-xl bg-[#d9785c] p-3"><ShieldCheck size={25} /></div>
-          <div><p className="text-lg font-semibold">Prior Authorization Assistant</p><p className="text-sm text-teal-100/70">Provider document workspace</p></div>
+          <BrandLogo alt="" width={52} height={44} priority className="shrink-0 rounded-lg bg-white p-1 object-contain" />
+          <div><p className="text-lg font-semibold">Ayuprama</p><p className="text-sm text-teal-100/70">Ruang kerja PA dan kelengkapan klaim</p></div>
         </div>
         <div className="relative max-w-lg">
-          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.18em] text-[#f0b19d]">Mulai alur kerja</p>
-          <h1 className="text-4xl font-semibold leading-tight">One workspace to prepare prior authorization requests.</h1>
-          <p className="mt-5 max-w-md leading-7 text-teal-50/75">Akun baru mendapat role Staff. Admin dapat memberikan role Reviewer atau Admin dari halaman kelola user.</p>
+          <p className="mb-4 text-sm font-semibold uppercase tracking-[0.1em] text-[#a9dfbf]">Mulai alur kerja</p>
+          <h1 className="text-4xl font-semibold leading-tight">Siapkan permohonan dan tinjau kelengkapan berkas.</h1>
+          <p className="mt-5 max-w-md leading-7 text-teal-50/90">Akun baru mendapat role Staff. Admin dapat memberikan role Reviewer atau Admin dari halaman kelola user.</p>
         </div>
-        <p className="relative text-sm text-teal-100/60">Prior authorization workflow for provider teams</p>
+        <p className="relative text-sm text-teal-100/80">Keputusan tetap berada pada reviewer dan payer.</p>
       </section>
 
       <section className="flex items-center justify-center px-5 py-10 sm:px-8">
         <div className="w-full max-w-md">
-          <div className="mb-8 lg:hidden"><div className="mb-4 inline-flex rounded-xl bg-[#143b3c] p-3 text-white"><ShieldCheck size={26} /></div><h1 className="text-xl font-semibold">Prior Authorization Assistant</h1></div>
+          <div className="mb-8 lg:hidden"><BrandLogo alt="" width={52} height={44} priority className="mb-4 rounded-lg bg-white p-1 object-contain" /><h1 className="text-xl font-semibold">Ayuprama</h1></div>
           {registered ? (
             <div role="status" className="rounded-2xl border border-emerald-300 bg-white p-6">
               <p className="text-sm font-semibold uppercase tracking-[0.12em] text-emerald-800">Pendaftaran selesai</p>
@@ -68,7 +69,7 @@ export default function RegisterPage() {
               <Link href="/login" className="mt-6 inline-flex min-h-11 items-center rounded-lg bg-[#143b3c] px-4 py-2.5 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">Lanjut ke halaman masuk</Link>
             </div>
           ) : <>
-          <p className="text-sm font-semibold text-[#a64f38]">AKUN BARU</p>
+          <p className="text-sm font-semibold text-[#174742]">AKUN BARU</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Daftar sebagai Staff</h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">Isi data akun. Setelah masuk, Anda dapat membuat dan mengelola permohonan milik sendiri.</p>
 

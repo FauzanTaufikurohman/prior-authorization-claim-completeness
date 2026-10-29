@@ -61,3 +61,24 @@ func TestDatabaseReadinessWithoutPool(t *testing.T) {
 		)
 	}
 }
+
+func TestPublicUploadRoutesDoNotRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := SetupRouter(nil)
+
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/public/pa-upload"},
+		{method: http.MethodPost, path: "/api/public/pa-upload/documents"},
+	} {
+		request := httptest.NewRequest(test.method, test.path, nil)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s %s returned %d, want %d without a database", test.method, test.path, recorder.Code, http.StatusServiceUnavailable)
+		}
+	}
+}

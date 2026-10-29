@@ -4,9 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { LockKeyhole, Mail, ShieldCheck } from "lucide-react";
+import { LockKeyhole, Mail } from "lucide-react";
 import api from "@/lib/api";
 import { saveSession, type LoginResponse } from "@/lib/auth";
+import { BrandLogo } from "@/components/brand-logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -70,35 +71,33 @@ export default function LoginPage() {
         />
 
         <div className="relative z-10 flex items-center gap-3">
-          <div className="rounded-xl bg-[#d9785c] p-2.5 sm:p-3">
-            <ShieldCheck size={25} aria-hidden="true" />
-          </div>
+          <BrandLogo alt="" width={48} height={40} priority className="shrink-0 rounded-lg bg-white p-1 object-contain" />
           <div>
-            <p className="text-lg font-semibold">Prior Authorization Assistant</p>
-            <p className="text-sm text-teal-100/85">Provider document workspace</p>
+            <p className="text-lg font-semibold">Ayuprama</p>
+            <p className="text-sm text-teal-100/85">Ruang kerja PA dan kelengkapan klaim</p>
           </div>
         </div>
 
         <div className="relative z-10 max-w-lg">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#ffd2bf] sm:mb-3 sm:text-sm">
-            PRIOR AUTHORIZATION
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-[#a9dfbf] sm:mb-3 sm:text-sm">
+            PRIOR AUTHORIZATION DAN KELENGKAPAN KLAIM
           </p>
           <h1 className="text-xl font-semibold leading-tight sm:text-2xl lg:text-4xl">
-            Prepare prior authorization requests and review supporting documents.
+            Siapkan permohonan dan tinjau dokumen pendukung.
           </h1>
           <p className="mt-4 hidden max-w-md leading-7 text-teal-50/90 lg:block">
-            Collect request information, organize supporting evidence, and track review progress.
+            Catat informasi permohonan, susun bukti pendukung, dan ikuti status tinjauan.
           </p>
         </div>
 
         <p className="relative z-10 hidden text-sm text-teal-100/80 lg:block">
-          Prior authorization workflow for provider teams
+          Keputusan tetap berada pada reviewer dan payer.
         </p>
       </section>
 
       <section className="flex items-center justify-center px-6 py-10 sm:px-8 sm:py-12 lg:min-h-screen">
         <div className="w-full max-w-md">
-          <p className="text-sm font-medium text-blue-700">SELAMAT DATANG KEMBALI</p>
+          <p className="text-sm font-medium text-blue-700">SELAMAT DATANG DI AYUPRAMA</p>
           <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
             Masuk ke akun
           </h2>

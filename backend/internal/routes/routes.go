@@ -21,6 +21,10 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 		api.POST("/auth/login", authHandler.Login)
 		api.POST("/auth/register", authHandler.Register)
 
+		documents := handlers.NewDocumentHandler(pool)
+		api.GET("/public/pa-upload", documents.PublicUploadInfo)
+		api.POST("/public/pa-upload/documents", documents.UploadPublic)
+
 		protected := api.Group("")
 		protected.Use(middleware.RequireAuth(pool))
 		{
@@ -40,7 +44,6 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 			workflow := handlers.NewPAWorkflowHandler(pool)
 			checklistVersions := handlers.NewChecklistVersionHandler(pool)
 			protected.GET("/checklist-options", checklistVersions.Options)
-			documents := handlers.NewDocumentHandler(pool)
 			checklists := handlers.NewChecklistHandler(pool)
 			fields := handlers.NewExtractedFieldHandler(pool)
 			requests := protected.Group("/pa-requests")
@@ -53,6 +56,7 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 
 				requests.GET("/:id/documents", documents.List)
 				requests.POST("/:id/documents", documents.Upload)
+				requests.POST("/:id/upload-link", documents.CreateUploadLink)
 				requests.DELETE("/:id/documents/:documentId", documents.Delete)
 				requests.POST("/:id/documents/:documentId/parse", documents.Parse)
 

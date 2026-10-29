@@ -17,12 +17,12 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  ShieldCheck,
   UserRoundCog,
   X,
 } from "lucide-react";
 import api from "@/lib/api";
 import { clearSession, type AuthUser } from "@/lib/auth";
+import { BrandLogo } from "@/components/brand-logo";
 
 const DashboardUserContext = createContext<AuthUser | null>(null);
 
@@ -186,12 +186,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         >
           <div className="flex min-h-20 items-center justify-between gap-3 border-b border-[#e7eeeb] px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="rounded-xl bg-blue-600 p-2.5 text-white">
-                <ShieldCheck size={22} aria-hidden="true" />
-              </span>
+              <BrandLogo alt="" width={44} height={37} priority className="shrink-0 rounded-lg bg-white p-1 object-contain" />
               <div className="min-w-0">
-                <p className="truncate font-semibold tracking-tight text-[#183336]">Prior Authorization Assistant</p>
-                <p className="text-xs text-slate-600">Document review workspace</p>
+                <p className="truncate font-semibold tracking-tight text-[#183336]">Ayuprama</p>
+                <p className="text-xs text-slate-600">Ruang kerja PA dan klaim</p>
               </div>
             </div>
             <button
@@ -274,7 +272,8 @@ export function DashboardShell({ children }: { children: ReactNode }) {
               <Menu size={20} aria-hidden="true" />
               Menu
             </button>
-            <span className="text-sm font-semibold text-[#183336]">Prior Authorization Assistant</span>
+            <BrandLogo alt="" width={34} height={29} priority className="shrink-0 rounded-md bg-white p-0.5 object-contain" />
+            <span className="text-sm font-semibold text-[#183336]">Ayuprama</span>
           </div>
           <div>{children}</div>
         </div>

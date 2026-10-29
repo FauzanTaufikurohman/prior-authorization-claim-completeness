@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import type { ReactNode } from "react";
 import { DashboardShell } from "@/components/dashboard-shell";
 
+export const instant = false;
+
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <Suspense

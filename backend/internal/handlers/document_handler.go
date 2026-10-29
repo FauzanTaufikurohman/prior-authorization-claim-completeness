@@ -3,6 +3,8 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -39,6 +41,152 @@ func NewDocumentHandler(db *pgxpool.Pool) *DocumentHandler {
 		DB:          db,
 		StorageRoot: root,
 	}
+}
+
+func (h *DocumentHandler) CreateUploadLink(c *gin.Context) {
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database service unavailable."})
+		return
+	}
+
+	requestID, ok := parseRequestID(c)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	var createdBy int64
+	var requestStatus string
+	err := h.DB.QueryRow(ctx, `
+		SELECT created_by, status
+		FROM pa_requests
+		WHERE id=$1 AND deleted_at IS NULL
+	`, requestID).Scan(&createdBy, &requestStatus)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (c.GetString("role") != "staff" || c.GetInt64("user_id") != createdBy)) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Permohonan tidak ditemukan."})
+		return
+	}
+	if err != nil {
+		log.Printf("load PA request %d to create upload link failed: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Permohonan gagal diperiksa."})
+		return
+	}
+	if !isPublicUploadStatus(requestStatus) {
+		c.JSON(http.StatusConflict, gin.H{"error": "Link upload hanya dapat dibuat untuk permohonan yang masih memerlukan dokumen."})
+		return
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		log.Printf("create upload link token for PA request %d failed: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Link upload gagal dibuat."})
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
+	tokenHash := hashPublicUploadToken(token)
+
+	result, err := h.DB.Exec(ctx, `
+		UPDATE pa_requests
+		SET public_upload_token_hash=$2
+		WHERE id=$1 AND deleted_at IS NULL
+		  AND status IN ('draft', 'needs_information', 'payer_needs_information')
+	`, requestID, tokenHash)
+	if err != nil {
+		log.Printf("save upload link token for PA request %d failed: %v", requestID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Link upload gagal disimpan."})
+		return
+	}
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "Permohonan sudah tidak menerima dokumen."})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"token": token}})
+}
+
+func (h *DocumentHandler) PublicUploadInfo(c *gin.Context) {
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database service unavailable."})
+		return
+	}
+	tokenHash, ok := parsePublicUploadToken(c.GetHeader("X-PA-Upload-Token"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Link upload tidak ditemukan atau sudah tidak aktif."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	var exists bool
+	err := h.DB.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pa_requests
+			WHERE public_upload_token_hash=$1
+			  AND deleted_at IS NULL
+			  AND status IN ('draft', 'needs_information', 'payer_needs_information')
+		)
+	`, tokenHash).Scan(&exists)
+	if err != nil {
+		log.Printf("check public upload link failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Link upload gagal diperiksa."})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Link upload tidak ditemukan atau sudah tidak aktif."})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"available": true}})
+}
+
+func (h *DocumentHandler) UploadPublic(c *gin.Context) {
+	if h.DB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Database service unavailable."})
+		return
+	}
+	tokenHash, ok := parsePublicUploadToken(c.GetHeader("X-PA-Upload-Token"))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Link upload tidak ditemukan atau sudah tidak aktif."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	var requestID int64
+	err := h.DB.QueryRow(ctx, `
+		SELECT id FROM pa_requests
+		WHERE public_upload_token_hash=$1
+		  AND deleted_at IS NULL
+		  AND status IN ('draft', 'needs_information', 'payer_needs_information')
+	`, tokenHash).Scan(&requestID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Link upload tidak ditemukan atau sudah tidak aktif."})
+		return
+	}
+	if err != nil {
+		log.Printf("resolve public upload link failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Link upload gagal diperiksa."})
+		return
+	}
+
+	h.uploadDocument(c, requestID, 0, tokenHash)
+}
+
+func isPublicUploadStatus(status string) bool {
+	return status == "draft" || status == "needs_information" || status == "payer_needs_information"
+}
+
+func parsePublicUploadToken(value string) (string, bool) {
+	token, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(token) != 32 {
+		return "", false
+	}
+	return hashPublicUploadToken(value), true
+}
+
+func hashPublicUploadToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
 }
 
 type documentMetadata struct {
@@ -287,6 +435,13 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	h.uploadDocument(c, requestID, userID, "")
+}
+
+func (h *DocumentHandler) uploadDocument(c *gin.Context, requestID, userID int64, publicTokenHash string) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
 	// Batasi keseluruhan request, termasuk multipart overhead.
 	c.Request.Body = http.MaxBytesReader(
 		c.Writer,
@@ -311,6 +466,20 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 
 	if c.Request.MultipartForm != nil {
 		defer c.Request.MultipartForm.RemoveAll()
+	}
+
+	whatsappNumber := ""
+	if publicTokenHash != "" {
+		var err error
+		whatsappNumber, err = services.NormalizeWhatsAppNumber(c.Request.FormValue("whatsapp_number"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if c.Request.FormValue("whatsapp_consent") != "true" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Persetujuan notifikasi WhatsApp terkait status PA wajib diberikan."})
+			return
+		}
 	}
 
 	file, header, err := c.Request.FormFile("file")
@@ -421,7 +590,44 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 		CreatedAt     time.Time `json:"created_at"`
 	}
 
-	err = h.DB.QueryRow(ctx, `
+	if publicTokenHash != "" {
+		err = h.DB.QueryRow(ctx, `
+			WITH active_request AS (
+				UPDATE pa_requests
+				SET whatsapp_number=$6, whatsapp_notifications_consented_at=NOW()
+				WHERE id=$1
+				  AND public_upload_token_hash=$7
+				  AND deleted_at IS NULL
+				  AND status IN ('draft', 'needs_information', 'payer_needs_information')
+				RETURNING id
+			)
+			INSERT INTO documents (
+				pa_request_id, original_filename, storage_key, mime_type,
+				size_bytes, parsing_status, uploaded_by
+			)
+			SELECT id, $2, $3, $4, $5, 'pending', NULL
+			FROM active_request
+			RETURNING id, pa_request_id, original_filename,
+			          mime_type, size_bytes, parsing_status, created_at
+		`,
+			requestID,
+			originalFilename,
+			storageKey,
+			mimeType,
+			int64(len(content)),
+			whatsappNumber,
+			publicTokenHash,
+		).Scan(
+			&document.ID,
+			&document.PARequestID,
+			&document.OriginalName,
+			&document.MIMEType,
+			&document.SizeBytes,
+			&document.ParsingStatus,
+			&document.CreatedAt,
+		)
+	} else {
+		err = h.DB.QueryRow(ctx, `
 		INSERT INTO documents (
 			pa_request_id,
 			original_filename,
@@ -440,30 +646,34 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 		RETURNING id, pa_request_id, original_filename,
 		          mime_type, size_bytes, parsing_status, created_at
 	`,
-		requestID,
-		originalFilename,
-		storageKey,
-		mimeType,
-		int64(len(content)),
-		userID,
-	).Scan(
-		&document.ID,
-		&document.PARequestID,
-		&document.OriginalName,
-		&document.MIMEType,
-		&document.SizeBytes,
-		&document.ParsingStatus,
-		&document.CreatedAt,
-	)
+			requestID,
+			originalFilename,
+			storageKey,
+			mimeType,
+			int64(len(content)),
+			userID,
+		).Scan(
+			&document.ID,
+			&document.PARequestID,
+			&document.OriginalName,
+			&document.MIMEType,
+			&document.SizeBytes,
+			&document.ParsingStatus,
+			&document.CreatedAt,
+		)
+	}
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "PA request tidak ditemukan atau sudah dihapus.",
-			})
+			if publicTokenHash != "" {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Link upload tidak ditemukan atau sudah tidak aktif."})
+			} else {
+				c.JSON(http.StatusNotFound, gin.H{"error": "PA request tidak ditemukan atau sudah dihapus."})
+			}
 			return
 		}
 
+		log.Printf("save document metadata for PA request %d failed: %v", requestID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Metadata dokumen gagal disimpan.",
 		})

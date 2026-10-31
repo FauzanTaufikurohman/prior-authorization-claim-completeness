@@ -758,17 +758,13 @@ function PARequestDetailContent({
   async function transition(action: string, extra: Record<string, string> = {}) {
     setError(""); setNotice(""); setBusy(true);
     try {
-      const response = await api.post<{
-        data: { whatsapp_notification?: { status?: string; message?: string } };
-      }>(`/pa-requests/${requestId}/transitions`, { action, ...extra }, { timeout: 100_000 });
-      const notification = response.data.data.whatsapp_notification;
-      const message = `Status permohonan berhasil disimpan. ${notification?.message ?? ""}`.trim();
+      await api.post(
+        `/pa-requests/${requestId}/transitions`,
+        { action, ...extra },
+        { timeout: 100_000 },
+      );
       await loadData({ silent: true });
-      if (notification?.status === "failed") {
-        setError((current) => [current, message].filter(Boolean).join(" "));
-      } else {
-        setNotice(message);
-      }
+      setNotice("Status permohonan berhasil disimpan.");
     } catch (cause) { setError(workflowErrorMessage(cause)); }
     finally { setBusy(false); }
   }

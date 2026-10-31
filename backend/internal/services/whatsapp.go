@@ -43,62 +43,31 @@ func NormalizeWhatsAppNumber(value string) (string, error) {
 	return number, nil
 }
 
-func BuildPAStatusMessage(requestNumber, status, action, decision string) string {
-	var update string
-	if action == "record_decision" || action == "record_appeal_decision" {
-		decisionLabels := map[string]string{
-			"approved":           "disetujui",
-			"denied":             "ditolak",
-			"partially_approved": "disetujui sebagian",
-			"withdrawn":          "ditarik",
-		}
-		label, ok := decisionLabels[decision]
-		if !ok {
-			label = "diperbarui"
-		}
-		if action == "record_appeal_decision" {
-			update = "Hasil banding " + label + "."
-		} else {
-			update = "Keputusan payer: " + label + "."
-		}
-	} else {
-		statusLabels := map[string]string{
-			"draft":                   "masih dalam tahap persiapan",
-			"ready_for_review":        "menunggu pemeriksaan",
-			"in_review":               "sedang diperiksa",
-			"needs_information":       "memerlukan informasi tambahan",
-			"ready_for_submission":    "siap diajukan ke payer",
-			"submitted":               "sudah diajukan ke payer",
-			"payer_needs_information": "payer meminta informasi tambahan",
-			"completed":               "selesai",
-			"cancelled":               "dibatalkan",
-			"appeal_submitted":        "banding sudah diajukan",
-		}
-		label, ok := statusLabels[status]
-		if !ok {
-			label = "diperbarui"
-		}
-		update = "Status permohonan " + label + "."
-	}
-
-	if strings.TrimSpace(requestNumber) == "" {
-		return update + " Hubungi petugas yang menangani permohonan jika ada pertanyaan."
-	}
-	return "Pembaruan PA " + requestNumber + ": " + update + " Hubungi petugas yang menangani permohonan jika ada pertanyaan."
+func SendFonnteReply(ctx context.Context, token, target, inboxID, message string) error {
+	return sendFonnteReply(ctx, fonnteSendEndpoint, token, target, inboxID, message)
 }
 
-func SendFonnteMessage(ctx context.Context, token, target, message string) error {
-	return sendFonnteMessage(ctx, fonnteSendEndpoint, token, target, message)
+func sendFonnteReply(ctx context.Context, endpoint, token, target, inboxID, message string) error {
+	return sendFonnteMessageWithInbox(ctx, endpoint, token, target, inboxID, message)
 }
 
-func sendFonnteMessage(ctx context.Context, endpoint, token, target, message string) error {
+func sendFonnteMessageWithInbox(
+	ctx context.Context,
+	endpoint, token, target, inboxID, message string,
+) error {
 	if strings.TrimSpace(token) == "" {
-		return errors.New("FONNTE_ACCOUNT_TOKEN belum dikonfigurasi")
+		return errors.New("Fonnte device token is required")
+	}
+	if strings.TrimSpace(target) == "" || strings.TrimSpace(message) == "" {
+		return errors.New("target and message are required for Fonnte")
 	}
 
 	form := url.Values{}
 	form.Set("target", target)
 	form.Set("message", message)
+	if strings.TrimSpace(inboxID) != "" {
+		form.Set("inboxid", strings.TrimSpace(inboxID))
+	}
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,

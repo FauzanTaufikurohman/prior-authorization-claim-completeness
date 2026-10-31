@@ -1,7 +1,9 @@
 package routes
 
 import (
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/FauzanTaufikurohman/prior-authorization-assistant/backend/internal/handlers"
 	"github.com/FauzanTaufikurohman/prior-authorization-assistant/backend/internal/middleware"
@@ -10,7 +12,11 @@ import (
 )
 
 func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{
+		SkipPaths: []string{"/api/webhooks/whatsapp"},
+	}))
+	router.Use(gin.Recovery())
 
 	api := router.Group("/api")
 	{
@@ -24,10 +30,25 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 		documents := handlers.NewDocumentHandler(pool)
 		api.GET("/public/pa-upload", documents.PublicUploadInfo)
 		api.POST("/public/pa-upload/documents", documents.UploadPublic)
+		whatsappIntake := handlers.NewWhatsAppIntakeHandler(pool)
+		api.POST("/webhooks/whatsapp", logWhatsAppWebhook(), whatsappIntake.Webhook)
 
 		protected := api.Group("")
 		protected.Use(middleware.RequireAuth(pool))
 		{
+			protected.GET("/whatsapp/intake-activity", middleware.RequireRoles("staff"), whatsappIntake.Activity)
+			whatsappDevices := handlers.NewWhatsAppDeviceHandler(pool)
+			pairings := protected.Group("/whatsapp/device-pairing")
+			pairings.Use(middleware.RequireRoles("staff"))
+			{
+				pairings.GET("", whatsappDevices.Current)
+				pairings.POST("", whatsappDevices.Create)
+				pairings.POST("/webhook", whatsappDevices.ConfigureWebhook)
+				pairings.POST("/qr", whatsappDevices.RefreshQRCode)
+				pairings.DELETE("", whatsappDevices.DeleteCurrent)
+				pairings.GET("/:id/status", whatsappDevices.Status)
+			}
+
 			protected.POST("/auth/logout", authHandler.Logout)
 			protected.GET("/auth/me", authHandler.Me)
 			protected.GET("/providers/npi/:number", handlers.NewNPIHandler().Lookup)
@@ -92,4 +113,18 @@ func SetupRouter(pool *pgxpool.Pool) *gin.Engine {
 	}
 
 	return router
+}
+
+func logWhatsAppWebhook() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		startedAt := time.Now()
+		defer func() {
+			log.Printf(
+				"WhatsApp webhook completed: status=%d duration=%s",
+				c.Writer.Status(),
+				time.Since(startedAt).Round(time.Millisecond),
+			)
+		}()
+		c.Next()
+	}
 }

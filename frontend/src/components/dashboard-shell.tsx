@@ -17,6 +17,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  QrCode,
   UserRoundCog,
   X,
 } from "lucide-react";
@@ -43,11 +44,13 @@ const navigation = [
   { href: "/requests", label: "Permohonan PA", icon: FileText, adminOnly: false },
   { href: "/checklists", label: "Kelola checklist", icon: ClipboardList, adminOnly: true },
   { href: "/users", label: "Kelola user", icon: UserRoundCog, adminOnly: true },
+  { href: "/whatsapp", label: "WhatsApp Staff", icon: QrCode, adminOnly: false, staffOnly: true },
 ] as const;
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const isWhatsAppPage = pathname === "/whatsapp" || pathname.startsWith("/whatsapp/");
   const sidebarRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const firstNavigationRef = useRef<HTMLAnchorElement>(null);
@@ -103,6 +106,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
+    if (!checkingSession && user && isWhatsAppPage && user.role !== "staff") {
+      router.replace("/dashboard");
+    }
+  }, [checkingSession, isWhatsAppPage, router, user]);
+
+  useEffect(() => {
     if (!menuOpen) return;
 
     firstNavigationRef.current?.focus();
@@ -144,12 +153,18 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     }
   }, [router]);
 
-  if (checkingSession || !user) {
+  if (checkingSession || !user || (isWhatsAppPage && user.role !== "staff")) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#f5f7f6]">
         <div role="status" className="text-center">
-          <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
-          <p className="mt-4 text-sm text-slate-700">Memverifikasi sesi...</p>
+          {checkingSession || !user ? (
+            <>
+              <div className="mx-auto h-9 w-9 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600" />
+              <p className="mt-4 text-sm text-slate-700">Memverifikasi sesi...</p>
+            </>
+          ) : (
+            <p className="text-sm text-slate-700">Halaman WhatsApp hanya tersedia untuk akun Staff. Mengalihkan ke dashboard...</p>
+          )}
         </div>
       </main>
     );
@@ -210,7 +225,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
               Workspace
             </p>
             {navigation
-              .filter((item) => !item.adminOnly || user.role === "admin")
+              .filter((item) =>
+                (!item.adminOnly || user.role === "admin") &&
+                (!("staffOnly" in item) || user.role === "staff"),
+              )
               .map((item, index) => {
                 const active =
                   pathname === item.href ||

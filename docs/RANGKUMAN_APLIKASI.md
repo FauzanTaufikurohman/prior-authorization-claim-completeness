@@ -199,6 +199,8 @@ Backend membaca file `backend/.env` saat dijalankan dari folder backend. Jangan 
 | `DB_PASSWORD` | Password PostgreSQL. | Wajib, simpan hanya di `.env`. |
 | `DB_NAME` | Nama database. | Wajib. |
 | `DB_SSLMODE` | Mode TLS PostgreSQL (`disable`, `require`, dan seterusnya sesuai deployment). | Wajib; contoh lokal `disable`. |
+| `FRONTEND_PUBLIC_URL` | Basis URL publik frontend untuk tautan upload dari chatbot WhatsApp. | Wajib untuk menyelesaikan pembuatan PA WhatsApp; contoh lokal `http://localhost:3000`, produksi harus dapat diakses pengguna. |
+| `FONNTE_WEBHOOK_URL` | URL webhook backend yang didaftarkan pada Fonnte. | Wajib untuk chatbot; memuat parameter `secret` acak minimal 32 karakter. Jangan gunakan sebagai domain tautan frontend. |
 | `OPENAI_API_KEY` | Kredensial untuk ekstraksi PDF via OpenAI. | Tanpa key, parsing AI PDF gagal; CSV tetap bisa diparse tanpa OpenAI. |
 | `OPENAI_MODEL` | Nama model OpenAI. | Jika kosong, kode memakai `gpt-4o-mini`; `.env.example` saat ini memberi `gpt-4.1-mini`, jadi nilai dari `.env` yang menentukan. |
 | `OPENAI_TIMEOUT_SECONDS` | Batas waktu panggilan OpenAI. | Default 30 detik; nilai kode hanya diterima bila 5–60. |

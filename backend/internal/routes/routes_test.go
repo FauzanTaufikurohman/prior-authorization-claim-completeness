@@ -1,9 +1,12 @@
 package routes
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -80,5 +83,56 @@ func TestPublicUploadRoutesDoNotRequireAuthentication(t *testing.T) {
 		if recorder.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s returned %d, want %d without a database", test.method, test.path, recorder.Code, http.StatusServiceUnavailable)
 		}
+	}
+}
+
+func TestWhatsAppRoutesAreRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := SetupRouter(nil)
+	registered := make(map[string]bool)
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+
+	for _, route := range []string{
+		"POST /api/webhooks/whatsapp",
+		"GET /api/whatsapp/intake-activity",
+		"GET /api/whatsapp/device-pairing",
+		"POST /api/whatsapp/device-pairing",
+		"POST /api/whatsapp/device-pairing/webhook",
+		"POST /api/whatsapp/device-pairing/qr",
+		"DELETE /api/whatsapp/device-pairing",
+		"GET /api/whatsapp/device-pairing/:id/status",
+	} {
+		if !registered[route] {
+			t.Errorf("route %q is not registered", route)
+		}
+	}
+}
+
+func TestWhatsAppWebhookLogsStatusWithoutLoggingQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := SetupRouter(nil)
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previousOutput)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/webhooks/whatsapp?secret=do-not-log-this",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("webhook status = %d, want %d without a database", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(output.String(), "status=503") {
+		t.Fatalf("webhook log = %q, want status", output.String())
+	}
+	if strings.Contains(output.String(), "do-not-log-this") {
+		t.Fatalf("webhook log exposed query secret: %q", output.String())
 	}
 }

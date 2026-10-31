@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const backendAPIURL = (
-  process.env.BACKEND_API_URL ?? "http://localhost:8081/api"
+  process.env.BACKEND_API_URL ??
+  "https://invisible-receptor-smell-shine.trycloudflare.com/api"
 ).replace(/\/$/, "");
 
 const nextConfig: NextConfig = {

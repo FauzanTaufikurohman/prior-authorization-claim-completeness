@@ -23,11 +23,11 @@ Scanned PDFs and OCR are not supported. Every AI-extracted field starts in
 pending review and must be verified by a person before checklist results are
 treated as complete.
 
-## Upload pasien dan notifikasi WhatsApp
+## Upload dokumen pasien
 
 Staff dapat membuat link upload dari tahap Dokumen pada permohonan. Link memakai token akses acak, bukan ID PA, dan berlaku selama permohonan masih menerima dokumen. Membuat link baru akan menonaktifkan link sebelumnya. Pengguna link dapat mengunggah CSV atau PDF tanpa login; proses review dan tindak lanjut tetap dilakukan Staff.
 
-Form upload meminta nomor WhatsApp aktif dan persetujuan untuk menerima notifikasi status PA. Nomor berasal dari pengguna, tidak dibuat otomatis, dan disimpan bersama permohonan saat dokumen berhasil diunggah. Backend mengirim pembaruan status tanpa mencantumkan diagnosis atau isi dokumen. Atur `FONNTE_ACCOUNT_TOKEN` hanya di `backend/.env`; token tidak boleh dimasukkan ke frontend.
+Form upload hanya meminta dokumen yang perlu ditinjau. Nomor telepon untuk notifikasi status PA tidak dikumpulkan atau disimpan. Chatbot intake PA tetap berjalan melalui device WhatsApp Staff yang dipasangkan ke Fonnte.
 
 ## Getting Started
 

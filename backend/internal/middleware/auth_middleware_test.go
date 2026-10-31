@@ -43,3 +43,34 @@ func TestRequireRoles(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireStaffRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, test := range []struct {
+		role       string
+		wantStatus int
+	}{
+		{role: "staff", wantStatus: http.StatusOK},
+		{role: "admin", wantStatus: http.StatusForbidden},
+		{role: "reviewer", wantStatus: http.StatusForbidden},
+		{role: "", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.role, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/whatsapp", func(c *gin.Context) {
+				c.Set("role", test.role)
+				c.Next()
+			}, RequireRoles("staff"), func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/whatsapp", nil))
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantStatus)
+			}
+		})
+	}
+}

@@ -181,33 +181,6 @@ export default function PatientUploadPage() {
           {linkAvailable && !submitted && (
             <form onSubmit={submitDocument} className="mt-6 space-y-5">
               <label className="block text-sm font-semibold text-[#183336]">
-                Nomor WhatsApp
-                <input
-                  type="tel"
-                  name="whatsapp_number"
-                  autoComplete="tel"
-                  inputMode="tel"
-                  required
-                  placeholder="08XXXXXXXXXX atau +62 8XX..."
-                  className="mt-2 min-h-12 w-full rounded-lg border border-[#657a73] bg-white px-3 text-base font-normal text-[#07171d] placeholder:text-[#53645f]"
-                />
-              </label>
-              <p className="-mt-3 text-sm leading-5 text-[#354e4a]">
-                Masukkan nomor aktif Anda. Nomor ini hanya digunakan untuk notifikasi perubahan status permohonan PA melalui WhatsApp, bukan dibuat otomatis.
-              </p>
-
-              <label className="flex min-h-11 items-start gap-3 text-sm leading-5 text-[#183336]">
-                <input
-                  type="checkbox"
-                  name="whatsapp_consent"
-                  value="true"
-                  required
-                  className="mt-0.5 h-5 w-5 shrink-0 accent-[#205b55]"
-                />
-                <span>Saya setuju menerima notifikasi WhatsApp terkait status permohonan PA ini.</span>
-              </label>
-
-              <label className="block text-sm font-semibold text-[#183336]">
                 Dokumen
                 <input
                   type="file"

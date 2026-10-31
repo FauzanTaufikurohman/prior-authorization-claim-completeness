@@ -77,13 +77,12 @@ func (h *DocumentHandler) CreateUploadLink(c *gin.Context) {
 		return
 	}
 
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	token, err := generatePublicUploadToken()
+	if err != nil {
 		log.Printf("create upload link token for PA request %d failed: %v", requestID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Link upload gagal dibuat."})
 		return
 	}
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	tokenHash := hashPublicUploadToken(token)
 
 	result, err := h.DB.Exec(ctx, `
@@ -468,20 +467,6 @@ func (h *DocumentHandler) uploadDocument(c *gin.Context, requestID, userID int64
 		defer c.Request.MultipartForm.RemoveAll()
 	}
 
-	whatsappNumber := ""
-	if publicTokenHash != "" {
-		var err error
-		whatsappNumber, err = services.NormalizeWhatsAppNumber(c.Request.FormValue("whatsapp_number"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if c.Request.FormValue("whatsapp_consent") != "true" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Persetujuan notifikasi WhatsApp terkait status PA wajib diberikan."})
-			return
-		}
-	}
-
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -593,13 +578,13 @@ func (h *DocumentHandler) uploadDocument(c *gin.Context, requestID, userID int64
 	if publicTokenHash != "" {
 		err = h.DB.QueryRow(ctx, `
 			WITH active_request AS (
-				UPDATE pa_requests
-				SET whatsapp_number=$6, whatsapp_notifications_consented_at=NOW()
+				SELECT id
+				FROM pa_requests
 				WHERE id=$1
-				  AND public_upload_token_hash=$7
+				  AND public_upload_token_hash=$6
 				  AND deleted_at IS NULL
 				  AND status IN ('draft', 'needs_information', 'payer_needs_information')
-				RETURNING id
+				FOR UPDATE
 			)
 			INSERT INTO documents (
 				pa_request_id, original_filename, storage_key, mime_type,
@@ -615,7 +600,6 @@ func (h *DocumentHandler) uploadDocument(c *gin.Context, requestID, userID int64
 			storageKey,
 			mimeType,
 			int64(len(content)),
-			whatsappNumber,
 			publicTokenHash,
 		).Scan(
 			&document.ID,
